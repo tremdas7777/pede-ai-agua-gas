@@ -1,0 +1,709 @@
+// Pedidos Pix guardados no servidor para que a aprovação seja reportada
+// (UTMify + Meta CAPI) mesmo que o cliente feche a página. Somente servidor.
+import { sendUtmifyOrder, type UtmParams } from "@/lib/utmify.server";
+import { sendCapiEvent } from "@/lib/meta.server";
+import {
+  sendRotasyncOrder,
+  type RotasyncAddress,
+  type RotasyncOrder,
+  type RotasyncResult,
+} from "@/lib/rotasync.server";
+import { EXPRESS_SHIPPING, SHIPPING_INSURANCE, type UpsellProduct } from "@/lib/upsell";
+import { getBundle } from "@/lib/bundles";
+import { brand } from "@/lib/brand";
+import { GIFT } from "@/lib/gift";
+import { isPaidStatus } from "@/lib/pix-status";
+import { getCardTransaction, isCardOrderId, CARD_ORDER_PREFIX } from "@/lib/hypercash.server";
+import { fetchPixStatus } from "@/lib/pix-gateway.server";
+import { needsUtmifyRetry, type PaidOrderReport } from "@/lib/utmify-retry";
+
+export type StoredCustomer = {
+  name: string;
+  email: string;
+  phone: string;
+  cpf: string;
+  endereco?: string;
+  /** Endereço por partes (pedidos a partir da integração com a RastroCode). */
+  address?: RotasyncAddress;
+  frete?: { id: string; name: string; price: number };
+  bumps?: { id: string; name: string; price: number }[];
+  /** Produto principal com a variação escolhida (cor, tamanho, personagem), para o envio. */
+  itemName?: string;
+  /** Formato antigo (um só bump). */
+  bump?: { id: string; name: string; price: number };
+  /** Id do pedido original quando este é um upsell pós-compra. */
+  upsellOf?: string;
+  /** Ofertas pós-compra desta cobrança (sem o campo = só o kit extra). */
+  upsellItems?: ("kit" | "seguro" | "expresso")[];
+  /** Código Pix copia-e-cola (guardado no upsell para reexibir sem cobrar de novo). */
+  qrcode?: string;
+  /** Forma de pagamento (pedidos antigos não têm: são Pix). */
+  method?: "pix" | "card";
+  installments?: number;
+  card?: { brand?: string; lastDigits?: string };
+  /** Desconto do Pix aplicado (reais). */
+  discount?: number;
+  /** Cobrança de teste (admin) feita após o pedido indicado. Não é reportada a lugar nenhum. */
+  testOf?: string;
+};
+
+async function admin() {
+  const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
+  // Tabela nova ainda não presente nos tipos gerados.
+  return supabaseAdmin as unknown as { from: (t: string) => any };
+}
+
+export async function saveOrder(o: {
+  id: string;
+  amountCents: number;
+  customer: StoredCustomer;
+  bundleId: string;
+  bundleName: string;
+  utm?: UtmParams;
+  ip?: string | null;
+  ua?: string | null;
+  fbp?: string | null;
+  fbc?: string | null;
+  /** Momento da criação (ms). O mesmo valor vai para a UTMify no "pendente" e no "pago". */
+  createdAt?: number;
+}): Promise<void> {
+  try {
+    const db = await admin();
+    const { error } = await db.from("pix_orders").upsert({
+      id: o.id,
+      ...(o.createdAt ? { created_at: new Date(o.createdAt).toISOString() } : {}),
+      amount_cents: o.amountCents,
+      customer: o.customer,
+      bundle_id: o.bundleId,
+      bundle_name: o.bundleName,
+      utm: o.utm ?? {},
+      ip: o.ip ?? null,
+      ua: o.ua ?? null,
+      fbp: o.fbp ?? null,
+      fbc: o.fbc ?? null,
+    });
+    if (error) console.error("saveOrder error", error.message);
+  } catch (e) {
+    console.error("saveOrder failed", e);
+  }
+}
+
+export type StoredOrder = {
+  id: string;
+  status: string;
+  amount_cents: number;
+  customer: StoredCustomer;
+  bundle_id: string;
+  bundle_name: string;
+  utm: UtmParams | null;
+  fbp: string | null;
+  fbc: string | null;
+};
+
+export async function getOrder(id: string): Promise<StoredOrder | null> {
+  const db = await admin();
+  const { data } = await db.from("pix_orders").select("*").eq("id", id).maybeSingle();
+  return (data as StoredOrder | null) ?? null;
+}
+
+/**
+ * Upsell já gerado para um pedido (evita cobranças duplicadas). São duas etapas independentes:
+ * as ofertas (kit e/ou seguro) e, depois, o envio expresso.
+ */
+export async function findUpsellOf(parentId: string, express = false): Promise<StoredOrder | null> {
+  const db = await admin();
+  const { data } = await db
+    .from("pix_orders")
+    .select("*")
+    .eq("customer->>upsellOf", parentId)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  const rows = (data ?? []) as StoredOrder[];
+  return rows.find((o) => !!o.customer?.upsellItems?.includes("expresso") === express) ?? null;
+}
+
+/**
+ * Avisa a UTMify que o Pix foi gerado (status "waiting_payment"). Isso NÃO conta como venda/conversão:
+ * a UTMify só considera venda quando o mesmo orderId chega depois com status "paid".
+ */
+export async function reportPendingToUtmify(o: {
+  id: string;
+  amountCents: number;
+  customer: StoredCustomer;
+  bundleId: string;
+  bundleName: string;
+  utm?: UtmParams;
+  ip?: string | null;
+  createdAt: number;
+}): Promise<void> {
+  // Upsell não vira pedido próprio na UTMify: quando pago, soma no pedido principal (sendUtmifyMainOrder).
+  if (o.customer.upsellOf) return;
+  const r = await sendUtmifyOrder({
+    orderId: o.id,
+    status: "waiting_payment",
+    // A UTMify exige a MESMA data de criação no envio pendente e no pago.
+    createdAt: o.createdAt,
+    approvedAt: null,
+    customer: {
+      name: o.customer.name,
+      email: o.customer.email,
+      phone: o.customer.phone,
+      document: o.customer.cpf,
+      ip: o.ip ?? null,
+    },
+    products: [
+      { id: o.bundleId, name: `${brand.name} -${o.bundleName}`, priceInCents: o.amountCents },
+    ],
+    amountCents: o.amountCents,
+    utm: o.utm ?? {},
+    paymentMethod: o.customer.method === "card" ? "credit_card" : "pix",
+  });
+  if (!r.ok) console.error("UTMify pending failed", o.id, r.error);
+  // Guarda a resposta no pedido para aparecer no admin (seção Técnico).
+  try {
+    const db = await admin();
+    await db
+      .from("pix_orders")
+      .update({ report_result: { utmifyPending: { ...r, at: new Date().toISOString() } } })
+      .eq("id", o.id)
+      .is("paid_reported_at", null);
+  } catch (e) {
+    console.error("UTMify pending save failed", e);
+  }
+}
+
+export { isPaidStatus };
+
+/** Consulta o status real no gateway. */
+export async function fetchGatewayStatus(id: string): Promise<{ status: string; amount: number }> {
+  if (isCardOrderId(id)) {
+    const tx = await getCardTransaction(id.slice(CARD_ORDER_PREFIX.length));
+    // HyperCash já devolve o valor em centavos.
+    return { status: tx?.status ?? "processing", amount: tx?.amount ?? 0 };
+  }
+  // Pix: Umbrella ("um_"), SagacePay ("sg_"), PayShark ("ps_"), Koku ("ko_") ou PixGate (sem prefixo).
+  return fetchPixStatus(id);
+}
+
+/**
+ * UTMify: o pedido principal com os upsells já pagos somados (kit/seguro e envio expresso), para cada
+ * cliente ser 1 venda com o total certo. Reenviado a cada pagamento (principal ou upsell): a UTMify
+ * atualiza o mesmo pedido pelo orderId.
+ */
+async function sendUtmifyMainOrder(mainId: string) {
+  const db = await admin();
+  const { data: main } = await db.from("pix_orders").select("*").eq("id", mainId).maybeSingle();
+  if (!main) return { ok: false, error: "Pedido principal não encontrado" };
+  const { data: ups } = await db
+    .from("pix_orders")
+    .select("*")
+    .eq("customer->>upsellOf", mainId)
+    .order("created_at", { ascending: true });
+  const paidUpsells = ((ups ?? []) as StoredOrder[]).filter((u) => isPaidStatus(u.status));
+  const c = main.customer as StoredCustomer;
+  const products = [
+    {
+      id: main.bundle_id,
+      name: `${brand.name} -${main.bundle_name}`,
+      priceInCents: main.amount_cents,
+    },
+    ...paidUpsells.map((u) => ({
+      id: `upsell-${(u.customer.upsellItems ?? ["kit"]).join("-")}`,
+      name: u.bundle_name,
+      priceInCents: u.amount_cents,
+    })),
+  ];
+  return sendUtmifyOrder({
+    orderId: mainId,
+    status: "paid",
+    createdAt: new Date(main.created_at).getTime(),
+    approvedAt: main.paid_reported_at ? new Date(main.paid_reported_at).getTime() : Date.now(),
+    customer: { name: c.name, email: c.email, phone: c.phone, document: c.cpf, ip: main.ip },
+    products,
+    amountCents: products.reduce((s, p) => s + p.priceInCents, 0),
+    utm: main.utm ?? {},
+    paymentMethod: c.method === "card" ? "credit_card" : "pix",
+  });
+}
+
+/**
+ * Pix pago mais de 3 h depois de gerado (reconferência de pedido antigo, aprovação manual): fica pago
+ * no /admin e vai para o envio, mas não vai para a UTMify nem para o Meta, senão entra como venda de
+ * hoje e bagunça a marcação das campanhas do dia.
+ */
+const VENDA_ANTIGA_MS = 3 * 60 * 60 * 1000;
+
+/**
+ * Reporta a venda aprovada uma única vez (idempotente via paid_reported_at).
+ * `extra` traz cookies do Meta/URL quando a chamada vem do navegador.
+ */
+export async function reportPaidOnce(
+  id: string,
+  gatewayAmount: number,
+  extra?: {
+    fbp?: string | null;
+    fbc?: string | null;
+    url?: string;
+    ip?: string | null;
+    ua?: string | null;
+  },
+): Promise<void> {
+  try {
+    const db = await admin();
+    // Trava atômica: só quem conseguir marcar paid_reported_at envia.
+    const { data: rows, error } = await db
+      .from("pix_orders")
+      .update({
+        status: "paid",
+        paid_reported_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", id)
+      .is("paid_reported_at", null)
+      .select("*");
+    if (error) {
+      console.error("reportPaidOnce lock error", error.message);
+      return;
+    }
+    const o = rows?.[0];
+    if (!o) return; // já reportado ou pedido desconhecido
+
+    // Cobrança de teste do admin: marca como paga, mas não vira venda em lugar nenhum.
+    if ((o.customer as StoredCustomer)?.testOf) {
+      await db
+        .from("pix_orders")
+        .update({
+          report_result: { skipped: "cobrança de teste do admin", at: new Date().toISOString() },
+        })
+        .eq("id", id);
+      return;
+    }
+
+    const amount =
+      Number.isFinite(gatewayAmount) && gatewayAmount > 0 ? gatewayAmount : o.amount_cents;
+    const c = o.customer as StoredCustomer;
+    const productName = `${brand.name} -${o.bundle_name}`;
+    // Upsell (kit/seguro, envio expresso) não é venda nova: na UTMify soma no pedido principal; no Meta
+    // vai como evento "Upsell" (não conta como compra da campanha).
+    const upsellOf = c.upsellOf;
+    // Canal que já confirmou o recebimento numa tentativa anterior não recebe de novo (sem duplicar venda).
+    const done = (o.report_result ?? {}) as { utmify?: { ok?: boolean }; meta?: { ok?: boolean } };
+    const antiga = Date.now() - new Date(o.created_at).getTime() > VENDA_ANTIGA_MS;
+    const naoEnviada = {
+      ok: true,
+      skipped: "venda antiga (Pix pago mais de 3 h depois de gerado)",
+    };
+    const utmify = done.utmify?.ok
+      ? done.utmify
+      : antiga
+        ? naoEnviada
+        : await sendUtmifyMainOrder(upsellOf ?? id);
+    const meta = done.meta?.ok
+      ? done.meta
+      : antiga
+        ? naoEnviada
+        : await sendCapiEvent({
+            eventName: upsellOf ? "Upsell" : "Purchase",
+            eventId: `${upsellOf ? "upsell" : "purchase"}-${id}`,
+            url: extra?.url,
+            user: {
+              email: c.email,
+              phone: c.phone,
+              name: c.name,
+              cpf: c.cpf,
+              fbp: extra?.fbp ?? o.fbp ?? null,
+              fbc: extra?.fbc ?? o.fbc ?? null,
+              ip: extra?.ip ?? o.ip ?? null,
+              ua: extra?.ua ?? o.ua ?? null,
+            },
+            customData: {
+              value: amount / 100,
+              currency: "BRL",
+              content_name: productName,
+              content_ids: [o.bundle_id],
+              content_type: "product",
+              order_id: id,
+            },
+          });
+    // Rastreio (Rotasync). Se a API já respondeu de forma definitiva (sucesso, 422, 401, 402, 403),
+    // não reenvia; pedidos que ficaram de fora vão pelo /admin (RotaSync → Pedidos antigos).
+    const prev = (o.report_result as { rastro?: RastroSalvo } | null)?.rastro;
+    const rastroDone =
+      !!prev && (jaNaRotasync(prev) || [401, 402, 403, 413, 415, 422].includes(prev.status ?? 0));
+    const pedido = rastroDone ? null : await pedidoRotasync(o as StoredOrder);
+    const rastro = !pedido
+      ? prev
+      : "skipped" in pedido
+        ? { ok: false, skipped: pedido.skipped }
+        : await sendRotasyncOrder(pedido);
+    // O rastreio fica fora do allOk: é idempotente por external_id e um 422 não deve ser retentado.
+    const allOk = utmify.ok && meta.ok;
+    console.log("reportPaidOnce", id, JSON.stringify({ utmify, meta, rastro }));
+    // Guarda o resultado; se algo falhou, libera a trava para nova tentativa.
+    await db
+      .from("pix_orders")
+      .update({
+        report_result: {
+          ...((o.report_result as Record<string, unknown> | null) ?? {}),
+          utmify,
+          meta,
+          rastro,
+          at: new Date().toISOString(),
+        },
+        ...(allOk ? {} : { paid_reported_at: null }),
+        ...(extra?.fbp ? { fbp: extra.fbp } : {}),
+        ...(extra?.fbc ? { fbc: extra.fbc } : {}),
+      })
+      .eq("id", id);
+  } catch (e) {
+    console.error("reportPaidOnce failed", e);
+  }
+}
+
+// ---------------------------------------------------------------------------------------------
+// RotaSync: o mesmo pedido serve para o envio automático (reportPaidOnce) e para o /admin.
+
+type RastroSalvo = { ok?: boolean; status?: number; skipped?: string; error?: string };
+
+/** Já está na RotaSync (os "pulados" antigos do pós-compra eram ok:true sem ter ido). */
+const jaNaRotasync = (r?: RastroSalvo | null) => !!r?.ok && !r.skipped;
+
+/** Nome de cada oferta do pós-compra para o estoque (a unidade extra leva a variação do pedido). */
+function itemPosCompra(p: UpsellProduct, principal: string): string {
+  if (p === "kit") return `Mais 1 unidade - ${brand.name} - ${principal}`;
+  return p === "seguro" ? SHIPPING_INSURANCE.name : EXPRESS_SHIPPING.name;
+}
+
+/**
+ * Produto principal com a variação. Pedidos novos guardam em itemName; nos antigos o nome do
+ * pedido é "produto + extras + brinde" e os extras já vão como itens próprios, então tira do fim
+ * os extras + brinde (senão o estoque separa em dobro).
+ */
+function produtoPrincipal(o: StoredOrder): string {
+  const c = o.customer;
+  if (c.itemName) return c.itemName;
+  let nome = o.bundle_name || getBundle(o.bundle_id).name;
+  const sufixoBrinde = ` + Brinde: ${GIFT.name}`;
+  if (nome.endsWith(sufixoBrinde)) nome = nome.slice(0, -sufixoBrinde.length);
+  for (const b of [...(c.bumps ?? (c.bump ? [c.bump] : []))].reverse()) {
+    if (nome.endsWith(` + ${b.name}`)) nome = nome.slice(0, -(b.name.length + 3));
+    else {
+      // O nome curto do extra (no pedido) pode diferir do completo (nos itens): tira o último.
+      const i = nome.lastIndexOf(" + ");
+      if (i > 0) nome = nome.slice(0, i);
+    }
+  }
+  return nome;
+}
+
+/** Pedido com brinde: todos os novos e os antigos que traziam "Brinde:" no nome. */
+const temBrinde = (o: StoredOrder) =>
+  !!o.customer.itemName || (o.bundle_name ?? "").includes(" + Brinde: ");
+
+/** Pedido pago no formato da RotaSync, ou o motivo de não ir. */
+async function pedidoRotasync(o: StoredOrder): Promise<RotasyncOrder | { skipped: string }> {
+  const c = o.customer;
+  if (c.testOf) return { skipped: "cobrança de teste do admin" };
+  // Pós-compra: o pedido original já foi enviado quando foi pago, então vai como complemento,
+  // com o endereço do original.
+  if (c.upsellOf) {
+    const main = await getOrder(c.upsellOf);
+    const mc = main?.customer;
+    if (!main || !mc?.address) return { skipped: "pedido original sem endereço por partes" };
+    const principal = produtoPrincipal(main);
+    return {
+      transactionId: o.id,
+      customer: { name: mc.name, email: mc.email, phone: mc.phone, document: mc.cpf },
+      address: mc.address,
+      products: (c.upsellItems ?? ["kit"]).map((p) => ({
+        name: `Complemento do pedido ${main.id}: ${itemPosCompra(p, principal)}`,
+        quantity: 1,
+        price: 0,
+      })),
+    };
+  }
+  if (!c.address) return { skipped: "pedido sem endereço por partes" };
+  return {
+    transactionId: o.id,
+    customer: { name: c.name, email: c.email, phone: c.phone, document: c.cpf },
+    address: c.address,
+    products: [
+      {
+        // Produto com a variação escolhida (só ele: os extras vêm a seguir).
+        name: `${brand.name} - ${produtoPrincipal(o)}`,
+        quantity: 1,
+        price: getBundle(o.bundle_id).price,
+      },
+      ...(c.bumps ?? (c.bump ? [c.bump] : [])).map((b) => ({
+        name: b.name,
+        quantity: 1,
+        price: b.price,
+      })),
+      // O brinde vai em todo pedido; sem ele na lista, o estoque não separa.
+      ...(temBrinde(o) ? [{ name: `Brinde: ${GIFT.name}`, quantity: 1, price: 0 }] : []),
+    ],
+  };
+}
+
+export type RotasyncPendente = {
+  id: string;
+  criadoEm: string;
+  cliente: string;
+  itens: string[];
+  totalCents: number;
+};
+
+type PedidoSalvo = StoredOrder & { created_at: string; report_result?: unknown };
+const rastroDe = (o: PedidoSalvo) =>
+  (o.report_result as { rastro?: RastroSalvo } | null)?.rastro ?? null;
+
+/** Pedidos pagos (entre os 500 mais recentes) que ainda não chegaram à RotaSync. */
+export async function listarPendentesRotasync(): Promise<{
+  pendentes: RotasyncPendente[];
+  semEndereco: number;
+}> {
+  const db = await admin();
+  const { data, error } = await db
+    .from("pix_orders")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (error) throw new Error(error.message);
+  const pendentes: RotasyncPendente[] = [];
+  let semEndereco = 0;
+  for (const o of (data ?? []) as PedidoSalvo[]) {
+    if (!isPaidStatus(o.status) || o.customer?.testOf || jaNaRotasync(rastroDe(o))) continue;
+    const pedido = await pedidoRotasync(o);
+    if ("skipped" in pedido) {
+      semEndereco++;
+      continue;
+    }
+    pendentes.push({
+      id: o.id,
+      criadoEm: o.created_at,
+      cliente: o.customer.name,
+      itens: pedido.products.map((p) => p.name),
+      totalCents: o.amount_cents,
+    });
+  }
+  return { pendentes, semEndereco };
+}
+
+/** Envia os pedidos escolhidos no /admin (a RotaSync ignora repetidos pelo external_id). */
+export async function enviarPendentesRotasync(
+  ids: string[],
+): Promise<{ id: string; ok: boolean; error?: string; trackingCode?: string }[]> {
+  const db = await admin();
+  const out: { id: string; ok: boolean; error?: string; trackingCode?: string }[] = [];
+  for (const id of ids) {
+    const { data } = await db.from("pix_orders").select("*").eq("id", id).maybeSingle();
+    const o = data as PedidoSalvo | null;
+    if (!o || !isPaidStatus(o.status)) {
+      out.push({ id, ok: false, error: "pedido não está pago" });
+      continue;
+    }
+    if (jaNaRotasync(rastroDe(o))) {
+      out.push({ id, ok: true, error: "já estava na RotaSync" });
+      continue;
+    }
+    const pedido = await pedidoRotasync(o);
+    if ("skipped" in pedido) {
+      out.push({ id, ok: false, error: pedido.skipped });
+      continue;
+    }
+    const r: RotasyncResult = await sendRotasyncOrder(pedido);
+    await db
+      .from("pix_orders")
+      .update({
+        report_result: {
+          ...((o.report_result as Record<string, unknown> | null) ?? {}),
+          rastro: r,
+          rastroManualEm: new Date().toISOString(),
+        },
+      })
+      .eq("id", id);
+    const detalhe = (r.details as { error?: { message?: string } } | undefined)?.error?.message;
+    out.push({
+      id,
+      ok: r.ok,
+      error: r.ok ? undefined : [r.error, detalhe].filter(Boolean).join(": "),
+      trackingCode: r.trackingCode,
+    });
+  }
+  return out;
+}
+
+/** Status de cobrança encerrada, gravados com o nome que o /admin já mostra. */
+const KOKU_FINAL: Record<string, string> = {
+  expired: "expired",
+  cancelled: "expired",
+  canceled: "expired",
+  failed: "refused",
+  refused: "refused",
+  refunded: "refunded",
+};
+let lastKokuReconcile = 0;
+const RECONCILE_KEY = "pix_reconcile_at";
+// O agendamento chama a cada 30 s; a trava de 25 s deixa passar cada chamada dele.
+const RECONCILE_EVERY_MS = 25_000;
+const ANTIGOS_KEY = "pix_reconcile_antigos_at";
+const ANTIGOS_EVERY_MS = 10 * 60_000;
+
+/** Trava no banco para a loja toda (várias instâncias): true = esta chamada pode rodar. */
+async function claimLock(key: string, everyMs: number, seDerErro: boolean): Promise<boolean> {
+  const db = await admin();
+  const now = new Date().toISOString();
+  try {
+    const { data, error } = await db
+      .from("private_settings")
+      .update({ value: now, updated_at: now })
+      .eq("key", key)
+      .lt("value", new Date(Date.now() - everyMs).toISOString())
+      .select("key");
+    if (error) throw new Error(error.message);
+    if (data?.length) return true;
+    // Primeira rodada da loja cria a linha; se ela já existe, outra instância acabou de conferir.
+    const { error: insertError } = await db
+      .from("private_settings")
+      .insert({ key, value: now, updated_at: now });
+    return !insertError;
+  } catch (e) {
+    console.error("pix-reconcile trava", key, e instanceof Error ? e.message : e);
+    return seDerErro;
+  }
+}
+
+/**
+ * Trava da conferência (várias instâncias, /admin e agendamento): no máximo 1 rodada a
+ * cada 25 s. Sem a trava do banco, vale a da instância.
+ */
+async function claimReconcile(): Promise<boolean> {
+  if (Date.now() - lastKokuReconcile < RECONCILE_EVERY_MS) return false;
+  lastKokuReconcile = Date.now();
+  return claimLock(RECONCILE_KEY, RECONCILE_EVERY_MS, true);
+}
+
+/**
+ * Venda paga que a UTMify não confirmou (UTMify fora do ar, queda de conexão ou processo cortado no
+ * meio do envio). O pedido já está "paid" e sai das consultas de pendentes, então sem isto a venda
+ * nunca mais seria reenviada. A UTMify atualiza pelo orderId: reenviar não duplica a venda.
+ * Só vendas das últimas 3 h (as mais antigas não vão para a UTMify, veja VENDA_ANTIGA_MS).
+ */
+async function retryUtmifyFailed(): Promise<number> {
+  const db = await admin();
+  const agora = Date.now();
+  const { data, error } = await db
+    .from("pix_orders")
+    .select("id, paid_reported_at, report_result")
+    .eq("status", "paid")
+    .gte("created_at", new Date(agora - VENDA_ANTIGA_MS).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(100);
+  if (error) {
+    console.error("pix-reconcile utmify query", error.message);
+    return 0;
+  }
+  const falhos = ((data ?? []) as PaidOrderReport[]).filter((o) => needsUtmifyRetry(o, agora));
+  let reenviados = 0;
+  for (let i = 0; i < falhos.length; i += 8) {
+    await Promise.all(
+      falhos.slice(i, i + 8).map(async (o) => {
+        try {
+          if (o.paid_reported_at) {
+            await db
+              .from("pix_orders")
+              .update({ paid_reported_at: null })
+              .eq("id", o.id)
+              .eq("paid_reported_at", o.paid_reported_at);
+          }
+          await reportPaidOnce(o.id, 0);
+          reenviados++;
+        } catch (e) {
+          console.error("pix-reconcile utmify", o.id, e instanceof Error ? e.message : e);
+        }
+      }),
+    );
+  }
+  return reenviados;
+}
+
+/**
+ * Pix não pago: consulta no gateway e reporta os pagos (loja, UTMify e RotaSync). Cobre quem pagou no
+ * app do banco e não voltou para a tela do pedido quando o aviso de pagamento do gateway não chega.
+ * - Pendentes das últimas 2 h: toda rodada. Pendentes de 2 h a 72 h: a cada 10 minutos.
+ * - "Expirados" das últimas 24 h também: a Pix Black já respondeu "expired" e minutos depois "paid"
+ *   (30/10, pedido pb_f8063ee4 da Beam), e antes disso o pedido ficava expirado para sempre.
+ * - Venda paga que a UTMify não confirmou: reenviada (retryUtmifyFailed).
+ * Roda pelo agendamento (/api/public/pix-reconcile, a cada 30 s) e pelo /admin. A tela do Pix do
+ * cliente não roda: ele esperaria a conferência da loja toda antes de ir para o pós-compra.
+ */
+export async function reconcilePendingPix(): Promise<{
+  checked: number;
+  paid: number;
+  utmify?: number;
+}> {
+  if (!(await claimReconcile())) return { checked: 0, paid: 0 };
+  const db = await admin();
+  const since = (hours: number) => new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+  const lote = (q: ReturnType<typeof db.from>) =>
+    q.is("paid_reported_at", null).not("id", "like", "hc_%").order("created_at", { ascending: false });
+  // Trava própria: com rodadas a cada 30 s, "minuto múltiplo de 10" daria 2 rodadas pesadas seguidas.
+  const antigos = await claimLock(ANTIGOS_KEY, ANTIGOS_EVERY_MS, false);
+  const consultas = await Promise.all([
+    lote(db.from("pix_orders").select("id"))
+      .not("status", "in", "(paid,expired,refused,refunded)")
+      .gte("created_at", since(antigos ? 72 : 2))
+      .limit(antigos ? 150 : 60),
+    lote(db.from("pix_orders").select("id"))
+      .eq("status", "expired")
+      .gte("created_at", since(antigos ? 24 : 2))
+      .limit(antigos ? 100 : 40),
+  ]);
+  const erro = consultas.find((r) => r.error)?.error;
+  if (erro) {
+    console.error("pix-reconcile query", erro.message);
+    return { checked: 0, paid: 0 };
+  }
+  const ids = [
+    ...new Set(consultas.flatMap((r) => ((r.data ?? []) as { id: string }[]).map((o) => o.id))),
+  ];
+  let paid = 0;
+  for (let i = 0; i < ids.length; i += 8) {
+    await Promise.all(
+      ids.slice(i, i + 8).map(async (id) => {
+        try {
+          const { status, amount } = await fetchGatewayStatus(id);
+          const final = KOKU_FINAL[String(status).toLowerCase()];
+          if (isPaidStatus(status)) {
+            await reportPaidOnce(id, amount);
+            paid++;
+          } else if (final) {
+            await db
+              .from("pix_orders")
+              .update({ status: final, updated_at: new Date().toISOString() })
+              .eq("id", id)
+              .neq("status", final)
+              .is("paid_reported_at", null);
+          }
+        } catch (e) {
+          console.error("pix-reconcile", id, e instanceof Error ? e.message : e);
+        }
+      }),
+    );
+  }
+  const utmify = await retryUtmifyFailed().catch((e) => {
+    console.error("pix-reconcile utmify failed", e);
+    return 0;
+  });
+  console.log(
+    "pix-reconcile",
+    ids.length,
+    "conferidos,",
+    paid,
+    "pagos,",
+    utmify,
+    "reenviados à UTMify",
+    antigos ? "(com antigos)" : "",
+  );
+  return { checked: ids.length, paid, utmify };
+}

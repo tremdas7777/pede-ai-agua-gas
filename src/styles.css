@@ -1,0 +1,292 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: "Archivo", ui-sans-serif, system-ui, -apple-system, sans-serif;
+  --font-display: "Archivo", ui-sans-serif, system-ui, -apple-system, sans-serif;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-ring-offset-background: var(--background);
+  --color-ink: var(--ink);
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+
+  --color-tinta: #101114;
+  --color-papel: #f5f3ee;
+  --color-linha: #e7e3da;
+  --color-apagado: #706d66;
+  --color-cobalto: #1f4bff;
+  --color-cobalto-escuro: #1638c9;
+  --color-cobalto-claro: #e9edff;
+  --color-sol: #ffc83d;
+  --color-chama: #ff5a1f;
+  --color-ok: #0f8a4b;
+}
+
+:root {
+  --radius: 0.875rem;
+
+  /* Paleta — Banguela Shop */
+  --paper: #ffffff;
+  --surface: #ffffff;
+  --ink: #13241b;
+  /* Verde-noite dos botões e títulos; menta das faixas, rodapé e selos. */
+  --night: #173f2a;
+  --mint: #e2f3e6;
+  --mint-strong: #cdebd5;
+  --tile: #f2f5f1;
+
+  --background: var(--paper);
+  --foreground: var(--ink);
+
+  --card: #ffffff;
+  --card-foreground: var(--ink);
+  --popover: #ffffff;
+  --popover-foreground: var(--ink);
+
+  /* Cor da marca — azul Pede Aí */
+  --primary: #1a4bd6;
+  --primary-dark: #143bb0;
+  --primary-deep: #0b2366;
+  --primary-foreground: #ffffff;
+  --brand-tint: #eaf0ff;
+  /* Descontos e estrelas */
+  --sale: #e23744;
+  --star: #f5a623;
+
+  --secondary: var(--paper);
+  --secondary-foreground: var(--ink);
+
+  --muted: #eef3ec;
+  --muted-foreground: oklch(0.45 0 0);
+
+  --accent: #ffffff;
+  --accent-foreground: var(--ink);
+
+  --destructive: oklch(0.55 0.22 27);
+  --destructive-foreground: #ffffff;
+
+  --border: rgba(13, 13, 13, 0.08);
+  --input: rgba(13, 13, 13, 0.12);
+  --ring: var(--ink);
+}
+
+.dark {
+  --background: #0d0d0d;
+  --foreground: #f5f3ee;
+  --card: #161616;
+  --card-foreground: #f5f3ee;
+  --popover: #161616;
+  --popover-foreground: #f5f3ee;
+  --primary: #2fb552;
+  --primary-dark: #1f9d41;
+  --primary-deep: #0f5f29;
+  --primary-foreground: #ffffff;
+  --brand-tint: #10261a;
+  --secondary: #1a1a1a;
+  --secondary-foreground: #f5f3ee;
+  --muted: #1a1a1a;
+  --muted-foreground: oklch(0.7 0 0);
+  --accent: #1a1a1a;
+  --accent-foreground: #f5f3ee;
+  --border: rgba(255, 255, 255, 0.08);
+  --input: rgba(255, 255, 255, 0.12);
+  --ring: #f5f3ee;
+}
+
+@layer base {
+  * {
+    border-color: var(--color-border);
+  }
+  html {
+    scroll-behavior: smooth;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    font-family: var(--font-sans);
+    font-weight: 400;
+  }
+  ::selection {
+    background: var(--primary);
+    color: var(--primary-foreground);
+  }
+  h1, h2, h3 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  h4, h5, h6 {
+    font-family: var(--font-sans);
+    font-weight: 500;
+  }
+}
+
+@layer utilities {
+  .font-display { font-family: var(--font-display); }
+  .font-sans { font-family: var(--font-sans); }
+
+  /* Títulos largos e pesados da marca Pede Aí. */
+  .titulo-largo {
+    font-weight: 800;
+    font-stretch: 118%;
+    letter-spacing: -0.025em;
+    line-height: 0.98;
+  }
+  .sem-barra { scrollbar-width: none; }
+  .sem-barra::-webkit-scrollbar { display: none; }
+
+  .container-edge {
+    width: 100%;
+    max-width: 80rem;
+    margin-inline: auto;
+    padding-inline: 1.5rem;
+  }
+  @media (min-width: 768px) {
+    .container-edge { padding-inline: 2rem; }
+  }
+
+  .eyebrow {
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  .rule {
+    display: inline-block;
+    width: 3rem;
+    height: 1px;
+    background-color: var(--color-foreground);
+  }
+
+  .text-balance { text-wrap: balance; }
+
+  /* Anti-cópia: bloqueia seleção de texto e arrastar imagens.
+     Inputs/textarea continuam selecionáveis para o usuário digitar. */
+  body {
+    -webkit-user-select: none;
+    -moz-user-select: none;
+    -ms-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input, textarea, [contenteditable="true"] {
+    -webkit-user-select: text;
+    -moz-user-select: text;
+    -ms-user-select: text;
+    user-select: text;
+  }
+  img {
+    -webkit-user-drag: none;
+    -khtml-user-drag: none;
+    -moz-user-drag: none;
+    -o-user-drag: none;
+    user-drag: none;
+    pointer-events: none;
+  }
+  a img, button img {
+    pointer-events: auto;
+  }
+
+  /* Legado: logos e ícones pequenos */
+  .store-image {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: 1rem;
+  }
+
+  .store-card {
+    border-radius: 0.875rem;
+  }
+
+  .fade-up {
+    animation: fadeUp 0.8s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+}
+
+/* Checkout — replica do checkout antigo (verde) */
+.ck {
+  --ck-green: #6cc551;
+  --ck-footer: #36ae12;
+  --ck-ok: #0e8f5b;
+  --ck-field: #e8f0fe;
+  --ck-blue: #2f6fed;
+  --ck-pix: #32bcad;
+  --ck-badge: #c9f2c0;
+  font-family: "Inter", system-ui, sans-serif;
+}
+.ck { --ck-bg: #ffffff; background: var(--ck-bg); }
+.ck h1, .ck h2, .ck h3 { font-family: inherit; letter-spacing: normal; }
+.ck .ck-surface { background: var(--ck-bg); }
+
+/* Painel /admin: tema próprio, neutro e com a fonte do sistema (não muda nada na loja). */
+@layer base {
+  .adm {
+    --background: #f4f5f7;
+    --foreground: #101828;
+    --card: #ffffff;
+    --card-foreground: #101828;
+    --popover: #ffffff;
+    --popover-foreground: #101828;
+    --primary: #173f2a;
+    --primary-foreground: #ffffff;
+    --secondary: #f2f4f7;
+    --secondary-foreground: #101828;
+    --muted: #f2f4f7;
+    --muted-foreground: #667085;
+    --accent: #f2f4f7;
+    --accent-foreground: #101828;
+    --border: #e4e7ec;
+    --input: #d0d5dd;
+    --ring: #173f2a;
+    --radius: 0.625rem;
+    /* Marca da loja nos detalhes do painel. */
+    --adm-brand: #173f2a;
+    --adm-brand-soft: #e8f3ec;
+    --adm-positive: #1f9d41;
+    font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+      sans-serif;
+    color: var(--foreground);
+    background: var(--background);
+  }
+  .adm h1,
+  .adm h2,
+  .adm h3 {
+    font-family: inherit;
+    letter-spacing: -0.015em;
+  }
+}

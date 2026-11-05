@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /admin
+Disallow: /api/
+Disallow: /pedido/
+Disallow: /obrigado/
+Disallow: /upsell/
+Disallow: /expresso/
+
+Sitemap: https://banguelashop.store/sitemap.xml

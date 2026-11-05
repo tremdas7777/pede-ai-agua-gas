@@ -1,0 +1,13 @@
+# Configuração Banguela Shop
+- [ ] Atualizar todos os Crocs para R$ 99 e dois por R$ 149; verificar escolha e checkout.
+- [ ] Recuperar disponibilidade do banco para o Pix: Lovable Cloud em inicialização; aguarda estado saudável.
+- [x] Ativar Lovable Cloud.
+- [x] Aplicar as seis migrations existentes, sem alterações, em ordem.
+- [x] Conferir configuração e variáveis públicas e servidor.
+- [x] Solicitar somente ADMIN_PASSWORD pelo formulário seguro.
+- [ ] Gateways e rastreio: usuário configurará depois pelo admin; não solicitar chaves agora.
+- [x] Testar Funil, Pedidos e Checkouts abandonados com a senha salva.
+- [ ] Testar Pix e ler pedido no admin: aguarda gateway configurado pelo usuário.
+- [x] Solicitar publicação em https://banguelashop.lovable.app.
+- [x] Confirmar resposta local do webhook: 200.
+- [x] Confirmar resposta do webhook publicado: 200 e confirmação ok.
