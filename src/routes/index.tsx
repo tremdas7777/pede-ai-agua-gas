@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
   Check,
   ChevronDown,
@@ -16,6 +16,7 @@ import { seo, storeJsonLd } from "@/lib/seo";
 import { whatsappLink } from "@/lib/whatsapp";
 import { calcularTotal, combosAtivos, formatPreco, precoCombo, type Combo } from "@/lib/catalogo";
 import {
+  CIDADE_EXEMPLO,
   CIDADES,
   camposFaltando,
   encontrarCidade,
@@ -23,7 +24,7 @@ import {
   statusFuncionamento,
   type Cidade,
 } from "@/lib/cidades";
-import { useLocal, type Local } from "@/lib/local";
+import { detectarLocalizacao, salvarLocal, useLocal, type Local } from "@/lib/local";
 import { adicionarCombo, somar, useSacola } from "@/lib/sacola";
 import { Foto, FotoCombo, Marca } from "@/components/app/Ilustracoes";
 import { Banners, type BannerId } from "@/components/app/Banners";
@@ -48,6 +49,14 @@ function Home() {
   const local = useLocal();
   const [cepAberto, setCepAberto] = useState(false);
   const cidade = local.cidade ? encontrarCidade(local.cidade, local.uf) : undefined;
+
+  useEffect(() => {
+    if (local.cep || sessionStorage.getItem("paag:localizacao-tentada")) return;
+    sessionStorage.setItem("paag:localizacao-tentada", "1");
+    detectarLocalizacao()
+      .then((detectado) => detectado && salvarLocal(detectado))
+      .catch(() => undefined);
+  }, [local.cep]);
 
   return (
     <AppShell>
@@ -111,6 +120,7 @@ function BoasVindas({ onCep }: { onCep: () => void }) {
       <section className="pt-8">
         <Banners ordem={["agua", "combo", "gas"]} onAcao={onCep} />
       </section>
+      <AmostraProdutos onCep={onCep} />
 
       <section className="mt-8 bg-white px-4 py-6">
         <TituloSecao titulo="Por que pedir aqui" />
@@ -132,6 +142,45 @@ function BoasVindas({ onCep }: { onCep: () => void }) {
         <ListaCidades />
       </section>
     </>
+  );
+}
+
+function AmostraProdutos({ onCep }: { onCep: () => void }) {
+  const r = CIDADE_EXEMPLO[0].revenda;
+  const produtos = [
+    { nome: "Botijão P13 · 13 kg", preco: r.precoGas, detalhe: "Troca do vazio · frete grátis" },
+    { nome: "Galão de água · 20 L", preco: r.precoAgua, detalhe: "Troca do galão · frete grátis" },
+    { nome: "Combo com 2 botijões", preco: 154.9, detalhe: "R$ 77,45 cada · oferta urgente" },
+  ];
+  return (
+    <section className="mt-7 bg-white px-4 py-6">
+      <div className="flex items-end justify-between gap-3">
+        <TituloSecao titulo="Produtos em destaque" />
+        <span className="pb-1 text-[11px] font-bold text-[#9a6500]">Entrega em 20 min</span>
+      </div>
+      <div className="mt-2 divide-y divide-linha rounded-2xl ring-1 ring-linha">
+        {produtos.map((produto) => (
+          <button
+            key={produto.nome}
+            type="button"
+            onClick={onCep}
+            className="flex w-full items-center gap-3 px-3 py-3 text-left first:rounded-t-2xl last:rounded-b-2xl active:bg-papel"
+          >
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-papel">
+              <Foto tipo={produto.nome.startsWith("Galão") ? "agua" : "gas"} className="h-9 w-auto" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-[14px] font-bold">{produto.nome}</span>
+              <span className="mt-0.5 block text-[12px] text-apagado">{produto.detalhe}</span>
+            </span>
+            <span className="shrink-0 text-right">
+              <span className="block text-[14px] font-bold tabular-nums">{formatPreco(produto.preco)}</span>
+              <span className="block text-[11px] font-semibold text-cobalto">Escolher CEP</span>
+            </span>
+          </button>
+        ))}
+      </div>
+    </section>
   );
 }
 
