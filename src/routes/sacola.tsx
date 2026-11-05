@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { AlertCircle, ArrowLeft, Banknote, CreditCard, MapPin, MessageCircle, Plus, QrCode, ShoppingBag } from "lucide-react";
+import { AlertCircle, ArrowLeft, MapPin, MessageCircle, Plus, QrCode, ShoppingBag } from "lucide-react";
 import { brand } from "@/lib/brand";
 import { calcularTotal, formatPreco } from "@/lib/catalogo";
 import { encontrarCidade, statusFuncionamento, type Cidade } from "@/lib/cidades";
@@ -17,12 +17,10 @@ export const Route = createFileRoute("/sacola")({
   component: Page,
 });
 
-type Pagamento = "dinheiro" | "cartao" | "pix_entrega";
+type Pagamento = "pix";
 
 const PAGAMENTOS: { id: Pagamento; titulo: string; sub: string; icone: ReactNode }[] = [
-  { id: "dinheiro", titulo: "Dinheiro", sub: "Pague ao entregador", icone: <Banknote className="h-5 w-5" /> },
-  { id: "cartao", titulo: "Cartão", sub: "Débito ou crédito na maquininha", icone: <CreditCard className="h-5 w-5" /> },
-  { id: "pix_entrega", titulo: "Pix na entrega", sub: "Chave da revenda na hora", icone: <QrCode className="h-5 w-5" /> },
+  { id: "pix", titulo: "Pix", sub: "Pagamento somente via Pix", icone: <QrCode className="h-5 w-5" /> },
 ];
 
 function Page() {
@@ -94,7 +92,7 @@ function Checkout({
     complemento: "",
     bairro: local.bairro,
     referencia: "",
-    pagamento: "dinheiro" as Pagamento,
+    pagamento: "pix" as Pagamento,
     troco: "",
   });
   const [tentou, setTentou] = useState(false);
@@ -125,7 +123,7 @@ function Checkout({
       t.desconto > 0 && `Desconto combo: -${formatPreco(t.desconto)}`,
       `Entrega: ${t.entrega > 0 ? formatPreco(t.entrega) : "grátis"}`,
       `*Total: ${formatPreco(t.total)}*`,
-      `Pagamento: ${pagamento}${f.pagamento === "dinheiro" && f.troco ? ` (troco para ${f.troco})` : ""}`,
+      `Pagamento: ${pagamento}`,
       "",
       `Nome: ${f.nome.trim()}`,
       `WhatsApp: ${f.whatsapp}`,
@@ -231,7 +229,7 @@ function Checkout({
         </div>
       </Bloco>
 
-      <Bloco titulo="Pagamento na entrega">
+      <Bloco titulo="Pagamento via Pix">
         <div className="divide-y divide-linha" role="radiogroup">
           {PAGAMENTOS.map((p) => {
             const ativo = f.pagamento === p.id;
@@ -260,11 +258,6 @@ function Checkout({
             );
           })}
         </div>
-        {f.pagamento === "dinheiro" && (
-          <div className="mt-2">
-            <Campo rotulo="Troco para quanto?" valor={f.troco} onChange={campo("troco")} inputMode="decimal" opcional />
-          </div>
-        )}
       </Bloco>
 
       <Bloco titulo="Resumo">

@@ -35,7 +35,7 @@ export const Route = createFileRoute("/")({
       path: "/",
       title: `${brand.name} | Delivery de água mineral 20L e gás 13kg`,
       description:
-        "Peça água mineral 20L e gás de cozinha 13kg da revenda da sua região. Veja preço e prazo pelo CEP e pague na entrega.",
+        "Peça água mineral 20L e gás de cozinha 13kg da revenda da sua região. Frete grátis, entrega em até 20 minutos e pagamento somente via Pix.",
       imageAlt: `${brand.name}: delivery de água e gás`,
       jsonLd: storeJsonLd(),
     }),
@@ -101,7 +101,7 @@ function BoasVindas({ onCep }: { onCep: () => void }) {
           <span className="text-cobalto">Pede Aí.</span>
         </h1>
         <p className="mt-4 max-w-[310px] text-[15px] leading-relaxed text-apagado">
-          Água mineral e gás de cozinha da revenda da sua região. Você paga só quando receber.
+          Água mineral e gás de cozinha da revenda da sua região, com frete grátis e entrega em até 20 minutos. Pagamento somente via Pix.
         </p>
         <div className="mt-6">
           <CepForm />
@@ -118,8 +118,8 @@ function BoasVindas({ onCep }: { onCep: () => void }) {
           <Motivo icone={<ShieldCheck className="h-5 w-5" />} titulo="Revenda identificada">
             Nome, CNPJ e autorização da ANP de quem entrega aparecem antes do pedido.
           </Motivo>
-          <Motivo icone={<Wallet className="h-5 w-5" />} titulo="Pague na entrega">
-            Dinheiro, cartão na maquininha ou Pix na hora em que o pedido chega.
+          <Motivo icone={<Wallet className="h-5 w-5" />} titulo="Pague com Pix">
+            Pagamento somente via Pix, com o pedido confirmado antes da entrega.
           </Motivo>
           <Motivo icone={<Clock className="h-5 w-5" />} titulo="Prazo de cada cidade">
             Mostramos o prazo médio e o horário real da revenda que atende você.
@@ -238,6 +238,8 @@ function Loja({ cidade }: { cidade: Cidade }) {
           </a>
         </div>
         <p className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-apagado">
+          <span className="font-semibold text-cobalto">Estamos a 1,6 km de você</span>
+          <span aria-hidden>·</span>
           <span className={`inline-flex items-center gap-1.5 font-semibold ${status.aberto ? "text-ok" : "text-tinta"}`}>
             <span className={`h-2 w-2 rounded-full ${status.aberto ? "bg-ok" : "bg-apagado"}`} />
             {status.curto}
@@ -289,6 +291,9 @@ function Loja({ cidade }: { cidade: Cidade }) {
 
       {ver("gas") && r.marcasGas.length > 0 && (
         <Folha titulo="Gás de cozinha" filtrado={filtro !== "todos"} onVerTudo={() => setFiltro("todos")}>
+          <p className="mb-2 rounded-xl bg-[#fff4d6] px-3 py-2 text-[12px] font-bold text-[#7a5300]">
+            Oferta urgente: estoque limitado para entrega em até 20 minutos.
+          </p>
           <Produto
             foto={<Foto tipo="gas" className="h-[92px] w-auto" />}
             nome="Botijão P13 · 13 kg"
@@ -450,7 +455,7 @@ function QuemEntrega({ cidade }: { cidade: Cidade }) {
         <Linha rotulo="Autorização ANP" valor={r.autorizacaoAnp} />
         <Linha rotulo="Endereço" valor={r.endereco} />
         <Linha rotulo="Horário" valor={horariosTexto(r)} />
-        <Linha rotulo="Pagamento" valor="Na entrega: dinheiro, cartão ou Pix" />
+        <Linha rotulo="Pagamento" valor="Somente Pix" />
       </dl>
       {faltando.length > 0 && (
         <p className="mt-3 rounded-xl bg-[#fff4d6] px-3 py-2.5 text-[12px] font-medium text-[#7a5300]">

@@ -21,7 +21,7 @@ import appCss from "../styles.css?url";
 
 const TITLE = `${brand.name} | Água mineral e gás de cozinha com entrega rápida`;
 const DESCRIPTION =
-  "Água mineral 20L e gás de cozinha 13kg entregues na sua porta em todo o Brasil. Pagamento no Pix, frete grátis na sua região, entrega em até 30 minutos.";
+  "Água mineral 20L e gás de cozinha 13kg entregues na sua porta em todo o Brasil. Pagamento somente no Pix, frete grátis e entrega em até 20 minutos.";
 
 function NotFoundComponent() {
   return (

@@ -199,7 +199,7 @@ export function validarLinha(l: LinhaCsv): ResultadoLinha {
         descontoCombos,
         marcasGas: vendeGas ? marcasGas : [],
         marcasAgua: vendeAgua ? marcasAgua : [],
-        pixAtivo: false,
+        pixAtivo: true,
       },
     },
   };

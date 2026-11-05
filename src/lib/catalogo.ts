@@ -4,24 +4,32 @@
  */
 
 export const marcasGas = [
-  "Copagaz",
   "Ultragaz",
+  "Supergasbras",
+  "Copagaz",
   "Liquigás",
   "Nacional Gás",
-  "Supergasbras",
+  "Consigaz",
+  "Fogás",
+  "Amazongás",
+  "Gasball",
+  "Bahiana",
+  "Minasgás",
 ] as const;
 
 export const marcasAgua = [
   "Indaiá",
+  "Minalba",
   "Crystal",
+  "Bonafont",
+  "Nestlé Pureza Vital",
+  "São Lourenço",
+  "Bioleve",
+  "Fresca",
   "Santa Joana",
-  "Serra Negra",
-  "Ouro Fino",
-  "Ibirá",
-  "Lindoya",
-  "Cristal",
-  "Attiva",
-  "Vale dos Prata",
+  "Cristalina",
+  "Serrambi",
+  "Lindóia",
 ] as const;
 
 export type MarcaGas = (typeof marcasGas)[number];
