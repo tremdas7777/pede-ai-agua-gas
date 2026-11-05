@@ -10,10 +10,13 @@ type Precos = { gas?: number; agua?: number; combo?: { total: number; economia: 
 export function Banners({
   ordem,
   precos = {},
+  aPartirDe = false,
   onAcao,
 }: {
   ordem: BannerId[];
   precos?: Precos;
+  /** Sem CEP: o preço é o menor entre as cidades atendidas. */
+  aPartirDe?: boolean;
   onAcao: (id: BannerId) => void;
 }) {
   const trilho = useRef<HTMLDivElement>(null);
@@ -46,9 +49,9 @@ export function Banners({
       >
         {ordem.map((id) => (
           <div key={id} className="w-full shrink-0 snap-center px-4">
-            {id === "gas" && <BannerGas preco={precos.gas} onAcao={() => onAcao("gas")} />}
-            {id === "agua" && <BannerAgua preco={precos.agua} onAcao={() => onAcao("agua")} />}
-            {id === "combo" && <BannerCombo preco={precos.combo} onAcao={() => onAcao("combo")} />}
+            {id === "gas" && <BannerGas preco={precos.gas} aPartirDe={aPartirDe} onAcao={() => onAcao("gas")} />}
+            {id === "agua" && <BannerAgua preco={precos.agua} aPartirDe={aPartirDe} onAcao={() => onAcao("agua")} />}
+            {id === "combo" && <BannerCombo preco={precos.combo} aPartirDe={aPartirDe} onAcao={() => onAcao("combo")} />}
           </div>
         ))}
       </div>
@@ -75,7 +78,7 @@ function Chamada({ children, onClick, estilo }: { children: ReactNode; onClick: 
     <button
       type="button"
       onClick={onClick}
-      className={`mt-auto inline-flex h-9 w-fit items-center gap-1.5 rounded-full px-4 text-[13px] font-bold transition active:scale-95 ${estilo}`}
+      className={`mt-auto inline-flex h-9 w-fit items-center gap-1.5 whitespace-nowrap rounded-full px-4 text-[13px] font-bold transition active:scale-95 ${estilo}`}
     >
       {children}
       <ArrowRight className="h-3.5 w-3.5" strokeWidth={2.75} />
@@ -83,41 +86,54 @@ function Chamada({ children, onClick, estilo }: { children: ReactNode; onClick: 
   );
 }
 
-function BannerGas({ preco, onAcao }: { preco?: number; onAcao: () => void }) {
+function TextoChamada({ preco, aPartirDe, padrao }: { preco?: number; aPartirDe: boolean; padrao: string }) {
+  if (!preco) return <>{padrao}</>;
+  if (!aPartirDe) return <>Pedir · {formatPreco(preco)}</>;
+  return (
+    <>
+      <span className="text-[11px] font-semibold opacity-60">a partir de</span>
+      <span className="tabular-nums">{formatPreco(preco)}</span>
+    </>
+  );
+}
+
+type PropsBanner = { preco?: number; aPartirDe: boolean; onAcao: () => void };
+
+function BannerGas({ preco, aPartirDe, onAcao }: PropsBanner) {
   return (
     <Moldura fundo="bg-cobalto text-white">
       <div className="absolute -bottom-24 -right-16 h-72 w-72 rounded-full bg-cobalto-escuro" />
       <div className="absolute -bottom-24 -right-16 h-72 w-72 rounded-full ring-[28px] ring-white/[0.06]" />
       <Foto
         tipo="gas"
-        className="absolute -bottom-4 right-1 h-[184px] w-auto drop-shadow-[0_14px_14px_rgba(0,0,0,0.35)]"
+        className="absolute -bottom-4 right-1 h-[clamp(150px,49vw,184px)] w-auto drop-shadow-[0_14px_14px_rgba(0,0,0,0.35)]"
       />
       <div className="relative flex h-full max-w-[58%] flex-col p-5">
         <p className="text-[12px] font-semibold text-white/65">Gás de cozinha P13</p>
-        <p className="titulo-largo mt-2 text-[29px]">
+        <p className="titulo-largo mt-2 text-[clamp(21px,7.8vw,29px)]">
           Acabou
           <br />o gás?
         </p>
-        <p className="titulo-largo mt-0.5 text-[29px] text-sol">Pede Aí.</p>
+        <p className="titulo-largo mt-0.5 text-[clamp(21px,7.8vw,29px)] text-sol">Pede Aí.</p>
         <Chamada onClick={onAcao} estilo="bg-white text-tinta">
-          {preco ? `Pedir · ${formatPreco(preco)}` : "Pedir gás"}
+          <TextoChamada preco={preco} aPartirDe={aPartirDe} padrao="Pedir gás" />
         </Chamada>
       </div>
     </Moldura>
   );
 }
 
-function BannerAgua({ preco, onAcao }: { preco?: number; onAcao: () => void }) {
+function BannerAgua({ preco, aPartirDe, onAcao }: PropsBanner) {
   return (
     <Moldura fundo="bg-sol text-tinta">
       <div className="absolute -right-20 -top-20 h-72 w-72 rounded-full bg-[#f6b92a]" />
       <div className="absolute -bottom-3 right-3 flex items-end">
-        <Foto tipo="agua" className="h-[136px] w-auto drop-shadow-[0_12px_12px_rgba(120,80,0,0.28)]" />
-        <Foto tipo="agua" className="-ml-6 h-[174px] w-auto drop-shadow-[0_14px_14px_rgba(120,80,0,0.3)]" />
+        <Foto tipo="agua" className="h-[clamp(100px,36vw,136px)] w-auto drop-shadow-[0_12px_12px_rgba(120,80,0,0.28)]" />
+        <Foto tipo="agua" className="-ml-6 h-[clamp(128px,46vw,174px)] w-auto drop-shadow-[0_14px_14px_rgba(120,80,0,0.3)]" />
       </div>
       <div className="relative flex h-full max-w-[56%] flex-col p-5">
         <p className="text-[12px] font-semibold text-tinta/60">Água mineral 20 L</p>
-        <p className="titulo-largo mt-2 text-[29px]">
+        <p className="titulo-largo mt-2 text-[clamp(21px,7.8vw,29px)]">
           Galão
           <br />
           cheio,
@@ -125,7 +141,7 @@ function BannerAgua({ preco, onAcao }: { preco?: number; onAcao: () => void }) {
           sem sair.
         </p>
         <Chamada onClick={onAcao} estilo="bg-tinta text-white">
-          {preco ? `Pedir · ${formatPreco(preco)}` : "Pedir água"}
+          <TextoChamada preco={preco} aPartirDe={aPartirDe} padrao="Pedir água" />
         </Chamada>
       </div>
     </Moldura>
@@ -134,25 +150,28 @@ function BannerAgua({ preco, onAcao }: { preco?: number; onAcao: () => void }) {
 
 function BannerCombo({
   preco,
+  aPartirDe,
   onAcao,
 }: {
   preco?: { total: number; economia: number };
+  aPartirDe: boolean;
   onAcao: () => void;
 }) {
   return (
     <Moldura fundo="bg-tinta text-white">
       <div className="absolute -bottom-28 -right-10 h-72 w-72 rounded-full bg-[#1b1d22]" />
       <div className="absolute -bottom-2 right-3">
-        <FotoCombo gas={1} agua={1} altura="h-[150px]" />
+        <FotoCombo gas={1} agua={1} altura="h-[clamp(104px,38vw,150px)]" />
       </div>
       <div className="relative flex h-full max-w-[52%] flex-col p-5">
         <p className="text-[12px] font-semibold text-sol">Combo da casa</p>
-        <p className="titulo-largo mt-2 text-[29px]">
+        <p className="titulo-largo mt-2 text-[clamp(21px,7.8vw,29px)]">
           Gás
           <br />+ Água
         </p>
         {preco ? (
           <p className="mt-2 leading-tight">
+            {aPartirDe && <span className="block text-[11px] text-white/60">a partir de</span>}
             <span className="block text-[17px] font-bold tabular-nums">{formatPreco(preco.total)}</span>
             <span className="block text-[12px] text-white/65">economize {formatPreco(preco.economia)}</span>
           </p>

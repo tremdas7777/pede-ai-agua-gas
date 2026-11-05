@@ -1,11 +1,31 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useState, type ReactNode } from "react";
-import { AlertCircle, ArrowLeft, Banknote, CreditCard, MapPin, MessageCircle, Plus, QrCode, ShoppingBag } from "lucide-react";
+import {
+  AlertCircle,
+  ArrowLeft,
+  BadgeCheck,
+  Banknote,
+  CreditCard,
+  MapPin,
+  MessageCircle,
+  Plus,
+  QrCode,
+  ShoppingBag,
+} from "lucide-react";
 import { brand } from "@/lib/brand";
-import { calcularTotal, formatPreco } from "@/lib/catalogo";
+import {
+  calcularTotal,
+  COMBOS,
+  formatPreco,
+  melhorCombinacao,
+  sugestaoCombo,
+  type Combo,
+  type ComboId,
+  type Precos,
+} from "@/lib/catalogo";
 import { encontrarCidade, statusFuncionamento, type Cidade } from "@/lib/cidades";
 import { mascaraCep, mascaraTelefone, soDigitos, useLocal, type Local } from "@/lib/local";
-import { atualizarSacola, esvaziarSacola, somar, useSacola, type Sacola } from "@/lib/sacola";
+import { atualizarSacola, esvaziarSacola, MAX_ITENS, somar, useSacola, type Sacola } from "@/lib/sacola";
 import { whatsappLink } from "@/lib/whatsapp";
 import { Foto } from "@/components/app/Ilustracoes";
 import { AppShell, Bloco, Campo, Chip, Quantidade } from "@/components/app/Partes";
@@ -57,6 +77,20 @@ function Page() {
   return <Checkout cidade={cidade} local={local} sacola={sacola} onEnviado={setLinkEnviado} />;
 }
 
+/** ["1gas1agua","1gas1agua"] → [{ combo: Gás + Água, vezes: 2, desconto: 10 }] */
+function aplicados(ids: ComboId[], descontos: Precos["descontoCombos"]) {
+  const out: { combo: Combo; vezes: number; desconto: number }[] = [];
+  for (const id of ids) {
+    const valor = descontos[id] ?? 0;
+    const item = out.find((x) => x.combo.id === id);
+    if (item) {
+      item.vezes++;
+      item.desconto = Math.round((item.desconto + valor) * 100) / 100;
+    } else out.push({ combo: COMBOS.find((c) => c.id === id)!, vezes: 1, desconto: valor });
+  }
+  return out;
+}
+
 function Cabecalho() {
   return (
     <header className="sticky top-0 z-30 flex items-center gap-3 border-b border-linha bg-papel/95 px-4 py-3 backdrop-blur-md">
@@ -101,28 +135,44 @@ function Checkout({
   const campo = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setF((v) => ({ ...v, [k]: e.target.value }));
 
-  const erro =
-    (sacola.gas > 0 && !sacola.marcaGas && "Escolha a marca do gás.") ||
-    (sacola.agua > 0 && !sacola.marcaAgua && "Escolha a marca da água.") ||
-    (!f.rua.trim() && "Informe a rua.") ||
-    (!f.numero.trim() && "Informe o número.") ||
-    (!f.bairro.trim() && "Informe o bairro.") ||
-    (f.nome.trim().length < 3 && "Informe seu nome.") ||
-    (![10, 11].includes(soDigitos(f.whatsapp).length) && "Informe um WhatsApp com DDD.") ||
-    "";
+  // Marca escolhida em outra cidade não vale se a revenda daqui não tem.
+  const marcaGas = r.marcasGas.includes(sacola.marcaGas) ? sacola.marcaGas : "";
+  const marcaAgua = r.marcasAgua.includes(sacola.marcaAgua) ? sacola.marcaAgua : "";
+
+  const combos = aplicados(melhorCombinacao(sacola.gas, sacola.agua, r.descontoCombos).combos, r.descontoCombos);
+  const sugestao = sugestaoCombo(sacola, r);
+  const podeSugerir = sugestao && sacola[sugestao.tipo] < MAX_ITENS;
+
+  const regras = [
+    { id: "marca-gas", falha: sacola.gas > 0 && !marcaGas, msg: "Escolha a marca do gás." },
+    { id: "marca-agua", falha: sacola.agua > 0 && !marcaAgua, msg: "Escolha a marca da água." },
+    { id: "campo-rua", falha: !f.rua.trim(), msg: "Informe a rua." },
+    { id: "campo-numero", falha: !f.numero.trim(), msg: "Informe o número." },
+    { id: "campo-bairro", falha: !f.bairro.trim(), msg: "Informe o bairro." },
+    { id: "campo-nome", falha: f.nome.trim().length < 3, msg: "Informe seu nome." },
+    { id: "campo-whatsapp", falha: ![10, 11].includes(soDigitos(f.whatsapp).length), msg: "Informe um WhatsApp com DDD." },
+  ];
+  const primeira = regras.find((x) => x.falha);
+  const erro = primeira?.msg ?? "";
+  const invalido = (id: string) => tentou && regras.some((x) => x.id === id && x.falha);
 
   function enviar() {
     setTentou(true);
-    if (erro) return;
+    if (primeira) {
+      const alvo = document.getElementById(primeira.id);
+      alvo?.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (alvo instanceof HTMLInputElement) alvo.focus({ preventScroll: true });
+      return;
+    }
     const pagamento = PAGAMENTOS.find((p) => p.id === f.pagamento)!.titulo;
     const linhas = [
       `*Novo pedido — ${brand.name}*`,
       "",
       sacola.gas > 0 &&
-        `${sacola.gas}x Gás P13 (${sacola.marcaGas}) — ${sacola.temVazioGas ? "troca do vazio" : "sem vazio, botijão novo"}`,
+        `${sacola.gas}x Gás P13 (${marcaGas}) — ${sacola.temVazioGas ? "troca do vazio" : "sem vazio, botijão novo"}`,
       sacola.agua > 0 &&
-        `${sacola.agua}x Água 20 L (${sacola.marcaAgua}) — ${sacola.temVazioAgua ? "troca do galão" : "sem galão, vasilhame novo"}`,
-      t.desconto > 0 && `Desconto combo: -${formatPreco(t.desconto)}`,
+        `${sacola.agua}x Água 20 L (${marcaAgua}) — ${sacola.temVazioAgua ? "troca do galão" : "sem galão, vasilhame novo"}`,
+      ...combos.map((c) => `Combo ${c.vezes > 1 ? `${c.vezes}x ` : ""}${c.combo.nome}: -${formatPreco(c.desconto)}`),
       `Entrega: ${t.entrega > 0 ? formatPreco(t.entrega) : "grátis"}`,
       `*Total: ${formatPreco(t.total)}*`,
       `Pagamento: ${pagamento}${f.pagamento === "dinheiro" && f.troco ? ` (troco para ${f.troco})` : ""}`,
@@ -163,7 +213,9 @@ function Checkout({
               onMais={() => somar("gas", 1)}
               onMenos={() => somar("gas", -1)}
               marcas={r.marcasGas}
-              marca={sacola.marcaGas}
+              marca={marcaGas}
+              idMarca="marca-gas"
+              marcaInvalida={invalido("marca-gas")}
               onMarca={(m) => atualizarSacola((s) => ({ ...s, marcaGas: m }))}
               temVazio={sacola.temVazioGas}
               onVazio={(v) => atualizarSacola((s) => ({ ...s, temVazioGas: v }))}
@@ -181,7 +233,9 @@ function Checkout({
               onMais={() => somar("agua", 1)}
               onMenos={() => somar("agua", -1)}
               marcas={r.marcasAgua}
-              marca={sacola.marcaAgua}
+              marca={marcaAgua}
+              idMarca="marca-agua"
+              marcaInvalida={invalido("marca-agua")}
               onMarca={(m) => atualizarSacola((s) => ({ ...s, marcaAgua: m }))}
               temVazio={sacola.temVazioAgua}
               onVazio={(v) => atualizarSacola((s) => ({ ...s, temVazioAgua: v }))}
@@ -190,6 +244,47 @@ function Checkout({
             />
           )}
         </div>
+
+        {combos.length > 0 && (
+          <ul className="mt-1 space-y-1.5">
+            {combos.map((c) => (
+              <li
+                key={c.combo.id}
+                className="flex items-center gap-2.5 rounded-xl bg-[#e3f4ea] px-3 py-2.5 text-[13px] text-ok"
+              >
+                <BadgeCheck className="h-4 w-4 shrink-0" />
+                <span className="flex-1 font-semibold">
+                  Combo {c.vezes > 1 ? `${c.vezes}× ` : ""}
+                  {c.combo.nome} aplicado
+                </span>
+                <span className="font-bold tabular-nums">−{formatPreco(c.desconto)}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {podeSugerir && sugestao && (
+          <div className="mt-3 flex items-center gap-3 rounded-2xl bg-cobalto-claro p-3">
+            <span className="flex h-12 w-10 shrink-0 items-center justify-center">
+              <Foto tipo={sugestao.tipo} className="h-12 w-auto" />
+            </span>
+            <p className="flex-1 text-[13px] leading-snug">
+              <span className="font-bold">
+                Falta 1 {sugestao.tipo === "agua" ? "água" : "gás"} pro combo {sugestao.combo.nome}.
+              </span>{" "}
+              Adicione por {formatPreco(sugestao.tipo === "agua" ? r.precoAgua : r.precoGas)} e economize{" "}
+              {formatPreco(sugestao.ganho)}.
+            </p>
+            <button
+              type="button"
+              onClick={() => somar(sugestao.tipo, 1)}
+              className="h-11 shrink-0 rounded-full bg-cobalto px-4 text-[13px] font-bold text-white transition active:scale-95"
+            >
+              Adicionar
+            </button>
+          </div>
+        )}
+
         <Link to="/" className="mt-1 flex h-11 items-center gap-2 text-[14px] font-semibold text-cobalto">
           <Plus className="h-4 w-4" strokeWidth={2.75} /> Adicionar mais itens
         </Link>
@@ -206,11 +301,25 @@ function Checkout({
           </Link>
         </div>
         <div className="grid grid-cols-[1fr_92px] gap-2">
-          <Campo rotulo="Rua" valor={f.rua} onChange={campo("rua")} autoComplete="address-line1" />
-          <Campo rotulo="Número" valor={f.numero} onChange={campo("numero")} inputMode="numeric" />
+          <Campo
+            id="campo-rua"
+            invalido={invalido("campo-rua")}
+            rotulo="Rua"
+            valor={f.rua}
+            onChange={campo("rua")}
+            autoComplete="address-line1"
+          />
+          <Campo
+            id="campo-numero"
+            invalido={invalido("campo-numero")}
+            rotulo="Número"
+            valor={f.numero}
+            onChange={campo("numero")}
+            inputMode="numeric"
+          />
         </div>
         <div className="mt-2 grid grid-cols-2 gap-2">
-          <Campo rotulo="Bairro" valor={f.bairro} onChange={campo("bairro")} />
+          <Campo id="campo-bairro" invalido={invalido("campo-bairro")} rotulo="Bairro" valor={f.bairro} onChange={campo("bairro")} />
           <Campo rotulo="Complemento" valor={f.complemento} onChange={campo("complemento")} opcional />
         </div>
         <div className="mt-2">
@@ -220,8 +329,17 @@ function Checkout({
 
       <Bloco titulo="Seus dados">
         <div className="space-y-2">
-          <Campo rotulo="Nome" valor={f.nome} onChange={campo("nome")} autoComplete="name" />
           <Campo
+            id="campo-nome"
+            invalido={invalido("campo-nome")}
+            rotulo="Nome"
+            valor={f.nome}
+            onChange={campo("nome")}
+            autoComplete="name"
+          />
+          <Campo
+            id="campo-whatsapp"
+            invalido={invalido("campo-whatsapp")}
             rotulo="WhatsApp com DDD"
             valor={f.whatsapp}
             onChange={(e) => setF((v) => ({ ...v, whatsapp: mascaraTelefone(e.target.value) }))}
@@ -283,7 +401,8 @@ function Checkout({
           </div>
         </dl>
         <p className="mt-3 text-[12px] leading-relaxed text-apagado">
-          Entregue por {r.nome}. Você paga só quando receber.
+          Vendido e entregue por {r.nome}
+          {r.cnpj && ` (CNPJ ${r.cnpj})`}. Você paga só quando receber.
         </p>
       </Bloco>
 
@@ -317,6 +436,8 @@ function Item(p: {
   onMenos: () => void;
   marcas: readonly string[];
   marca: string;
+  idMarca: string;
+  marcaInvalida: boolean;
   onMarca: (m: string) => void;
   temVazio: boolean;
   onVazio: (v: boolean) => void;
@@ -334,15 +455,23 @@ function Item(p: {
         <Quantidade valor={p.qtd} rotulo={p.rotulo} onMais={p.onMais} onMenos={p.onMenos} />
       </div>
 
-      <p className="mt-4 text-[13px] font-semibold">
-        Marca <span className="font-normal text-apagado">· escolha uma</span>
-      </p>
-      <div className="mt-2 flex flex-wrap gap-1.5">
-        {p.marcas.map((m) => (
-          <Chip key={m} ativo={p.marca === m} onClick={() => p.onMarca(m)}>
-            {m}
-          </Chip>
-        ))}
+      <div
+        id={p.idMarca}
+        className={`mt-3 scroll-mt-28 rounded-xl transition ${p.marcaInvalida ? "bg-red-50 p-2.5 ring-1 ring-red-500" : "pt-1"}`}
+      >
+        <p className={`text-[13px] font-semibold ${p.marcaInvalida ? "text-red-700" : ""}`}>
+          Marca{" "}
+          <span className={`font-normal ${p.marcaInvalida ? "text-red-700" : "text-apagado"}`}>
+            · {p.marcaInvalida ? "escolha uma pra continuar" : "escolha uma"}
+          </span>
+        </p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {p.marcas.map((m) => (
+            <Chip key={m} ativo={p.marca === m} onClick={() => p.onMarca(m)}>
+              {m}
+            </Chip>
+          ))}
+        </div>
       </div>
 
       <label className="mt-4 flex cursor-pointer items-center justify-between gap-3">

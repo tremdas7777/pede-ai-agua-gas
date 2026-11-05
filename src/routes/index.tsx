@@ -14,15 +14,8 @@ import {
 import { brand } from "@/lib/brand";
 import { seo, storeJsonLd } from "@/lib/seo";
 import { whatsappLink } from "@/lib/whatsapp";
-import { calcularTotal, combosAtivos, formatPreco, precoCombo, type Combo } from "@/lib/catalogo";
-import {
-  CIDADES,
-  camposFaltando,
-  encontrarCidade,
-  horariosTexto,
-  statusFuncionamento,
-  type Cidade,
-} from "@/lib/cidades";
+import { calcularTotal, formatPreco, ofertaDe, type Combo, type Oferta, type OfertaCombo } from "@/lib/catalogo";
+import { CIDADES, encontrarCidade, statusFuncionamento, vitrine, type Cidade } from "@/lib/cidades";
 import { useLocal, type Local } from "@/lib/local";
 import { adicionarCombo, somar, useSacola } from "@/lib/sacola";
 import { Foto, FotoCombo, Marca } from "@/components/app/Ilustracoes";
@@ -43,21 +36,52 @@ export const Route = createFileRoute("/")({
 });
 
 type Filtro = "todos" | "gas" | "agua" | "combos";
+type Tipo = "gas" | "agua";
+/** Itens que o cliente tocou antes de informar o CEP; entram na sacola quando ele confirma. */
+type Pendente = { gas: number; agua: number } | null;
+
+const item = (t: Tipo): Pendente => (t === "gas" ? { gas: 1, agua: 0 } : { gas: 0, agua: 1 });
 
 function Home() {
   const local = useLocal();
   const [cepAberto, setCepAberto] = useState(false);
+  const [pendente, setPendente] = useState<Pendente>(null);
   const cidade = local.cidade ? encontrarCidade(local.cidade, local.uf) : undefined;
+
+  const pedirCep = (p: Pendente) => {
+    setPendente(p);
+    setCepAberto(true);
+  };
+  const aoConfirmarCep = (l: Local) => {
+    const c = encontrarCidade(l.cidade, l.uf);
+    if (c && pendente) {
+      const gas = c.revenda.marcasGas.length ? pendente.gas : 0;
+      const agua = c.revenda.marcasAgua.length ? pendente.agua : 0;
+      if (gas + agua > 0) adicionarCombo(gas, agua);
+    }
+    window.scrollTo({ top: 0 });
+  };
 
   return (
     <AppShell>
-      <BarraTopo local={local} onTrocar={() => setCepAberto(true)} />
-      {!local.cidade && <BoasVindas onCep={() => setCepAberto(true)} />}
-      {local.cidade && !cidade && <NaoAtendida local={local} onTrocar={() => setCepAberto(true)} />}
+      <BarraTopo local={local} onTrocar={() => pedirCep(null)} />
+      {!local.cidade && <Vitrine onPedir={pedirCep} />}
+      {local.cidade && !cidade && <NaoAtendida local={local} onTrocar={() => pedirCep(null)} />}
       {cidade && <Loja cidade={cidade} />}
       <Rodape />
       {cidade && <BarraSacola cidade={cidade} />}
-      <CepSheet aberto={cepAberto} onFechar={() => setCepAberto(false)} />
+      <CepSheet
+        aberto={cepAberto}
+        onFechar={() => {
+          setCepAberto(false);
+          setPendente(null);
+        }}
+        onOk={aoConfirmarCep}
+        {...(pendente && {
+          titulo: "Pra onde vai o pedido?",
+          texto: "Informe o CEP: mostramos o preço da revenda da sua região e já colocamos o item na sacola.",
+        })}
+      />
     </AppShell>
   );
 }
@@ -89,34 +113,62 @@ function BarraTopo({ local, onTrocar }: { local: Local; onTrocar: () => void }) 
   );
 }
 
-/* ---------- sem CEP ---------- */
+/* ---------- sem CEP: vitrine com preço "a partir de" ---------- */
 
-function BoasVindas({ onCep }: { onCep: () => void }) {
+function Vitrine({ onPedir }: { onPedir: (p: Pendente) => void }) {
+  const oferta = vitrine();
+  const destaque = oferta?.combos.find((c) => c.combo.id === "1gas1agua") ?? oferta?.combos[0];
+  const acaoBanner = (id: BannerId) =>
+    onPedir(id === "combo" ? (destaque ? { gas: destaque.combo.gas, agua: destaque.combo.agua } : null) : item(id));
+
   return (
     <>
-      <section className="px-4 pt-7">
-        <h1 className="titulo-largo text-[40px]">
-          Acabou o gás?
-          <br />
-          <span className="text-cobalto">Pede Aí.</span>
-        </h1>
-        <p className="mt-4 max-w-[310px] text-[15px] leading-relaxed text-apagado">
-          Água mineral e gás de cozinha da revenda da sua região. Você paga só quando receber.
-        </p>
-        <div className="mt-6">
-          <CepForm />
+      <section className="px-4 pt-5">
+        <h1 className="titulo-largo text-[26px]">Gás e água na sua porta.</h1>
+        <p className="mt-2 text-[14px] text-apagado">Peça agora e pague só quando receber.</p>
+      </section>
+
+      <section className="pt-4">
+        <Banners
+          ordem={["gas", "agua", ...(destaque ? (["combo"] as const) : [])]}
+          precos={{
+            gas: oferta?.precoGas || undefined,
+            agua: oferta?.precoAgua || undefined,
+            combo: destaque,
+          }}
+          aPartirDe
+          onAcao={acaoBanner}
+        />
+      </section>
+
+      {oferta && (
+        <Catalogo
+          oferta={oferta}
+          aPartirDe
+          qtd={{ gas: 0, agua: 0 }}
+          onMais={(t) => onPedir(item(t))}
+          onMenos={() => {}}
+          onCombo={(c) => onPedir({ gas: c.gas, agua: c.agua })}
+        />
+      )}
+
+      <section className="px-4 pt-6">
+        <div className="rounded-[22px] bg-white p-4 ring-1 ring-linha">
+          <p className="titulo-largo text-[19px]">Veja o preço da sua região</p>
+          <p className="mt-1.5 text-[13px] leading-snug text-apagado">
+            Informe o CEP: mostramos a revenda que entrega aí, o prazo e o preço final.
+          </p>
+          <div className="mt-3">
+            <CepForm onOk={() => window.scrollTo({ top: 0 })} />
+          </div>
         </div>
       </section>
 
-      <section className="pt-8">
-        <Banners ordem={["agua", "combo", "gas"]} onAcao={onCep} />
-      </section>
-
-      <section className="mt-8 bg-white px-4 py-6">
+      <section className="mt-6 bg-white px-4 py-6">
         <TituloSecao titulo="Por que pedir aqui" />
         <ul className="divide-y divide-linha">
           <Motivo icone={<ShieldCheck className="h-5 w-5" />} titulo="Revenda identificada">
-            Nome, CNPJ e autorização da ANP de quem entrega aparecem antes do pedido.
+            Nome e CNPJ de quem entrega aparecem antes de você enviar o pedido.
           </Motivo>
           <Motivo icone={<Wallet className="h-5 w-5" />} titulo="Pague na entrega">
             Dinheiro, cartão na maquininha ou Pix na hora em que o pedido chega.
@@ -202,41 +254,21 @@ function NaoAtendida({ local, onTrocar }: { local: Local; onTrocar: () => void }
 function Loja({ cidade }: { cidade: Cidade }) {
   const r = cidade.revenda;
   const sacola = useSacola();
-  const [filtro, setFiltro] = useState<Filtro>("todos");
-  const listaRef = useRef<HTMLDivElement>(null);
-  const combos = combosAtivos(r);
+  const oferta = ofertaDe(r);
   const status = statusFuncionamento(r);
-  const comboDestaque = combos.find((c) => c.id === "1gas1agua") ?? combos[0];
+  const destaque = oferta.combos.find((c) => c.combo.id === "1gas1agua") ?? oferta.combos[0];
 
-  const escolher = (f: Filtro) => {
-    setFiltro((atual) => (atual === f ? "todos" : f));
-    listaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-  };
   const acaoBanner = (id: BannerId) => {
-    if (id === "gas") somar("gas", 1);
-    else if (id === "agua") somar("agua", 1);
-    else if (comboDestaque) adicionarCombo(comboDestaque.gas, comboDestaque.agua);
+    if (id === "combo") {
+      if (destaque) adicionarCombo(destaque.combo.gas, destaque.combo.agua);
+    } else somar(id, 1);
   };
-  const ver = (f: Filtro) => filtro === "todos" || filtro === f;
-
-  const categorias: { id: Filtro; rotulo: string; foto: ReactNode; mostrar: boolean }[] = [
-    { id: "gas", rotulo: "Gás", foto: <Foto tipo="gas" className="h-14 w-auto" />, mostrar: r.marcasGas.length > 0 },
-    { id: "agua", rotulo: "Água", foto: <Foto tipo="agua" className="h-14 w-auto" />, mostrar: r.marcasAgua.length > 0 },
-    { id: "combos", rotulo: "Combos", foto: <FotoCombo gas={1} agua={1} altura="h-12" />, mostrar: combos.length > 0 },
-  ];
 
   return (
     <>
       <section className="px-4 pt-5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-[13px] font-medium text-apagado">Entrega em {cidade.nome}</p>
-            <h1 className="titulo-largo mt-1.5 truncate text-[24px]">{r.nome}</h1>
-          </div>
-          <a href="#revenda" className="mt-1 shrink-0 text-[13px] font-semibold text-cobalto">
-            Ver dados
-          </a>
-        </div>
+        <p className="text-[13px] font-medium text-apagado">Entrega em {cidade.nome}</p>
+        <h1 className="titulo-largo mt-1.5 truncate text-[24px]">{r.nome}</h1>
         <p className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-apagado">
           <span className={`inline-flex items-center gap-1.5 font-semibold ${status.aberto ? "text-ok" : "text-tinta"}`}>
             <span className={`h-2 w-2 rounded-full ${status.aberto ? "bg-ok" : "bg-apagado"}`} />
@@ -253,16 +285,64 @@ function Loja({ cidade }: { cidade: Cidade }) {
 
       <section className="pt-5">
         <Banners
-          ordem={["gas", "agua", ...(comboDestaque ? (["combo"] as const) : [])]}
-          precos={{
-            gas: r.precoGas,
-            agua: r.precoAgua,
-            combo: comboDestaque ? precoCombo(comboDestaque, r) : undefined,
-          }}
+          ordem={["gas", "agua", ...(destaque ? (["combo"] as const) : [])]}
+          precos={{ gas: r.precoGas || undefined, agua: r.precoAgua || undefined, combo: destaque }}
           onAcao={acaoBanner}
         />
       </section>
 
+      <Catalogo
+        oferta={oferta}
+        qtd={sacola}
+        onMais={(t) => somar(t, 1)}
+        onMenos={(t) => somar(t, -1)}
+        onCombo={(c) => adicionarCombo(c.gas, c.agua)}
+      />
+
+      <p className="px-4 pt-6 text-[12px] leading-relaxed text-apagado">
+        Vendido e entregue por {r.nome}
+        {r.cnpj && ` · CNPJ ${r.cnpj}`}
+        {r.endereco && ` · ${r.endereco}`}.
+      </p>
+    </>
+  );
+}
+
+/* ---------- catálogo (usado na vitrine e na loja) ---------- */
+
+function Catalogo({
+  oferta,
+  aPartirDe = false,
+  qtd,
+  onMais,
+  onMenos,
+  onCombo,
+}: {
+  oferta: Oferta;
+  aPartirDe?: boolean;
+  qtd: { gas: number; agua: number };
+  onMais: (t: Tipo) => void;
+  onMenos: (t: Tipo) => void;
+  onCombo: (c: Combo) => void;
+}) {
+  const [filtro, setFiltro] = useState<Filtro>("todos");
+  const listaRef = useRef<HTMLDivElement>(null);
+  const vendeGas = oferta.marcasGas.length > 0 && oferta.precoGas > 0;
+  const vendeAgua = oferta.marcasAgua.length > 0 && oferta.precoAgua > 0;
+  const ver = (f: Filtro) => filtro === "todos" || filtro === f;
+  const escolher = (f: Filtro) => {
+    setFiltro((atual) => (atual === f ? "todos" : f));
+    listaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
+  const categorias: { id: Filtro; rotulo: string; foto: ReactNode; mostrar: boolean }[] = [
+    { id: "gas", rotulo: "Gás", foto: <Foto tipo="gas" className="h-14 w-auto" />, mostrar: vendeGas },
+    { id: "agua", rotulo: "Água", foto: <Foto tipo="agua" className="h-14 w-auto" />, mostrar: vendeAgua },
+    { id: "combos", rotulo: "Combos", foto: <FotoCombo gas={1} agua={1} altura="h-12" />, mostrar: oferta.combos.length > 0 },
+  ];
+
+  return (
+    <>
       <nav className="grid grid-cols-3 gap-2.5 px-4 pt-6" aria-label="Categorias">
         {categorias
           .filter((c) => c.mostrar)
@@ -287,45 +367,47 @@ function Loja({ cidade }: { cidade: Cidade }) {
 
       <div ref={listaRef} className="scroll-mt-28" />
 
-      {ver("gas") && r.marcasGas.length > 0 && (
+      {ver("gas") && vendeGas && (
         <Folha titulo="Gás de cozinha" filtrado={filtro !== "todos"} onVerTudo={() => setFiltro("todos")}>
           <Produto
             foto={<Foto tipo="gas" className="h-[92px] w-auto" />}
             nome="Botijão P13 · 13 kg"
-            detalhe={`Lacrado, com troca do vazio. ${listaMarcas(r.marcasGas)}.`}
-            preco={r.precoGas}
-            acao={
-              <Quantidade valor={sacola.gas} rotulo="gás" onMais={() => somar("gas", 1)} onMenos={() => somar("gas", -1)} />
-            }
+            detalhe={`Lacrado, com troca do vazio. ${listaMarcas(oferta.marcasGas)}.`}
+            preco={oferta.precoGas}
+            aPartirDe={aPartirDe}
+            acao={<Quantidade valor={qtd.gas} rotulo="gás" onMais={() => onMais("gas")} onMenos={() => onMenos("gas")} />}
           />
         </Folha>
       )}
 
-      {ver("agua") && r.marcasAgua.length > 0 && (
+      {ver("agua") && vendeAgua && (
         <Folha titulo="Água mineral" filtrado={filtro !== "todos"} onVerTudo={() => setFiltro("todos")}>
           <Produto
             foto={<Foto tipo="agua" className="h-[96px] w-auto" />}
             nome="Galão 20 litros"
-            detalhe={`Lacrado, com troca do galão. ${listaMarcas(r.marcasAgua)}.`}
-            preco={r.precoAgua}
-            acao={
-              <Quantidade valor={sacola.agua} rotulo="água" onMais={() => somar("agua", 1)} onMenos={() => somar("agua", -1)} />
-            }
+            detalhe={`Lacrado, com troca do galão. ${listaMarcas(oferta.marcasAgua)}.`}
+            preco={oferta.precoAgua}
+            aPartirDe={aPartirDe}
+            acao={<Quantidade valor={qtd.agua} rotulo="água" onMais={() => onMais("agua")} onMenos={() => onMenos("agua")} />}
           />
         </Folha>
       )}
 
-      {ver("combos") && combos.length > 0 && (
+      {ver("combos") && oferta.combos.length > 0 && (
         <Folha titulo="Combos" filtrado={filtro !== "todos"} onVerTudo={() => setFiltro("todos")}>
           <div className="divide-y divide-linha">
-            {combos.map((c) => (
-              <ComboLinha key={c.id} combo={c} cidade={cidade} />
+            {oferta.combos.map((c) => (
+              <ComboLinha
+                key={c.combo.id}
+                oferta={c}
+                aPartirDe={aPartirDe}
+                confirmar={!aPartirDe}
+                onAdicionar={() => onCombo(c.combo)}
+              />
             ))}
           </div>
         </Folha>
       )}
-
-      <QuemEntrega cidade={cidade} />
     </>
   );
 }
@@ -368,6 +450,7 @@ function Produto({
   nome,
   detalhe,
   preco,
+  aPartirDe = false,
   antes,
   economia,
   acao,
@@ -376,6 +459,7 @@ function Produto({
   nome: string;
   detalhe: string;
   preco: number;
+  aPartirDe?: boolean;
   antes?: number;
   economia?: number;
   acao: ReactNode;
@@ -386,6 +470,7 @@ function Produto({
         <h3 className="text-[16px] font-bold leading-snug">{nome}</h3>
         <p className="mt-1 line-clamp-3 text-[13px] leading-snug text-apagado">{detalhe}</p>
         <p className="mt-2.5 flex flex-wrap items-baseline gap-x-2">
+          {aPartirDe && <span className="w-full text-[11px] font-medium text-apagado">a partir de</span>}
           <span className="text-[16px] font-bold tabular-nums">{formatPreco(preco)}</span>
           {antes !== undefined && (
             <span className="text-[13px] tabular-nums text-apagado line-through">{formatPreco(antes)}</span>
@@ -397,14 +482,24 @@ function Produto({
       </div>
       <div className="relative h-[116px] w-[116px] shrink-0">
         <div className="flex h-full w-full items-center justify-center rounded-2xl bg-papel">{foto}</div>
-        <div className="absolute -bottom-2 right-1.5">{acao}</div>
+        <div className="absolute -bottom-3 right-1">{acao}</div>
       </div>
     </article>
   );
 }
 
-function ComboLinha({ combo, cidade }: { combo: Combo; cidade: Cidade }) {
-  const preco = precoCombo(combo, cidade.revenda);
+function ComboLinha({
+  oferta,
+  aPartirDe,
+  confirmar,
+  onAdicionar,
+}: {
+  oferta: OfertaCombo;
+  aPartirDe: boolean;
+  confirmar: boolean;
+  onAdicionar: () => void;
+}) {
+  const { combo } = oferta;
   const [ok, setOk] = useState(false);
   const partes = [
     combo.gas > 0 && `${combo.gas} botij${combo.gas > 1 ? "ões" : "ão"} P13`,
@@ -415,60 +510,28 @@ function ComboLinha({ combo, cidade }: { combo: Combo; cidade: Cidade }) {
       foto={<FotoCombo gas={combo.gas} agua={combo.agua} altura={combo.gas + combo.agua > 2 ? "h-[64px]" : "h-[78px]"} />}
       nome={combo.nome}
       detalhe={`${partes.join(" + ")}. O desconto entra sozinho na sacola.`}
-      preco={preco.total}
-      antes={preco.avulso}
-      economia={preco.economia}
+      preco={oferta.total}
+      aPartirDe={aPartirDe}
+      antes={oferta.avulso}
+      economia={oferta.economia}
       acao={
         <button
           type="button"
           onClick={() => {
-            adicionarCombo(combo.gas, combo.agua);
+            onAdicionar();
+            if (!confirmar) return;
             setOk(true);
             window.setTimeout(() => setOk(false), 1300);
           }}
           aria-label={`Adicionar combo ${combo.nome}`}
-          className={`flex h-9 w-9 items-center justify-center rounded-full shadow-[0_2px_10px_rgba(16,17,20,0.16)] ring-1 ring-black/5 transition active:scale-90 ${
+          className={`flex h-11 w-11 items-center justify-center rounded-full shadow-[0_2px_10px_rgba(16,17,20,0.16)] ring-1 ring-black/5 transition active:scale-90 ${
             ok ? "bg-ok text-white" : "bg-white text-cobalto"
           }`}
         >
-          {ok ? <Check className="h-[18px] w-[18px]" strokeWidth={2.75} /> : <Plus className="h-[18px] w-[18px]" strokeWidth={2.75} />}
+          {ok ? <Check className="h-5 w-5" strokeWidth={2.75} /> : <Plus className="h-5 w-5" strokeWidth={2.75} />}
         </button>
       }
     />
-  );
-}
-
-function QuemEntrega({ cidade }: { cidade: Cidade }) {
-  const r = cidade.revenda;
-  const faltando = camposFaltando(r);
-  return (
-    <section id="revenda" className="mt-6 scroll-mt-28 bg-white px-4 pb-5 pt-5">
-      <TituloSecao titulo="Sobre a revenda" />
-      <dl className="divide-y divide-linha">
-        <Linha rotulo="Revenda" valor={r.nome} />
-        <Linha rotulo="CNPJ" valor={r.cnpj} />
-        <Linha rotulo="Autorização ANP" valor={r.autorizacaoAnp} />
-        <Linha rotulo="Endereço" valor={r.endereco} />
-        <Linha rotulo="Horário" valor={horariosTexto(r)} />
-        <Linha rotulo="Pagamento" valor="Na entrega: dinheiro, cartão ou Pix" />
-      </dl>
-      {faltando.length > 0 && (
-        <p className="mt-3 rounded-xl bg-[#fff4d6] px-3 py-2.5 text-[12px] font-medium text-[#7a5300]">
-          Cadastro da revenda incompleto: falta {faltando.join(", ")}.
-        </p>
-      )}
-    </section>
-  );
-}
-
-function Linha({ rotulo, valor }: { rotulo: string; valor: string }) {
-  return (
-    <div className="flex items-start justify-between gap-6 py-3">
-      <dt className="shrink-0 text-[13px] text-apagado">{rotulo}</dt>
-      <dd className={`text-right text-[13px] font-semibold ${valor ? "text-tinta" : "text-[#b07800]"}`}>
-        {valor || "Falta cadastrar"}
-      </dd>
-    </div>
   );
 }
 

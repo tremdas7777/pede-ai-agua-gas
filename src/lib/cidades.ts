@@ -1,4 +1,4 @@
-import type { Precos } from "./catalogo";
+import { COMBOS, precoCombo, type Oferta, type Precos } from "./catalogo";
 import parceiros from "./parceiros.json";
 
 /** dias: 0 = domingo … 6 = sábado. Horas em "HH:MM", horário de Brasília. */
@@ -65,6 +65,38 @@ export const CIDADES: Cidade[] =
       ? CIDADE_EXEMPLO
       : [];
 
+/**
+ * Vitrine pra quem ainda não informou o CEP: o menor preço real de cada produto e
+ * de cada combo entre as cidades atendidas (mostrado como "a partir de").
+ */
+export function vitrine(lista: Cidade[] = CIDADES): Oferta | null {
+  if (!lista.length) return null;
+  const rs = lista.map((c) => c.revenda);
+  const menor = (valores: number[]) => {
+    const v = valores.filter((n) => n > 0);
+    return v.length ? Math.min(...v) : 0;
+  };
+  const combos = COMBOS.flatMap((combo) => {
+    const opcoes = rs
+      .filter(
+        (r) =>
+          (r.descontoCombos[combo.id] ?? 0) > 0 &&
+          (combo.gas === 0 || r.precoGas > 0) &&
+          (combo.agua === 0 || r.precoAgua > 0),
+      )
+      .map((r) => precoCombo(combo, r));
+    if (!opcoes.length) return [];
+    return [{ combo, ...opcoes.reduce((a, b) => (b.total < a.total ? b : a)) }];
+  });
+  return {
+    precoGas: menor(rs.map((r) => r.precoGas)),
+    precoAgua: menor(rs.map((r) => r.precoAgua)),
+    marcasGas: [...new Set(rs.flatMap((r) => r.marcasGas))],
+    marcasAgua: [...new Set(rs.flatMap((r) => r.marcasAgua))],
+    combos,
+  };
+}
+
 export function normalizar(texto: string): string {
   return texto
     .normalize("NFD")
@@ -77,18 +109,6 @@ export function encontrarCidade(nome: string, uf: string, lista = CIDADES): Cida
   const n = normalizar(nome);
   const u = normalizar(uf);
   return lista.find((c) => normalizar(c.nome) === n && normalizar(c.uf) === u);
-}
-
-/** Campos que ainda faltam para a revenda poder aparecer no ar. */
-export function camposFaltando(r: Revenda): string[] {
-  const faltando: string[] = [];
-  if (!r.cnpj) faltando.push("CNPJ");
-  if (!r.endereco) faltando.push("endereço");
-  if (!r.autorizacaoAnp) faltando.push("autorização ANP");
-  if (!r.whatsapp) faltando.push("WhatsApp");
-  if (!(r.precoGas > 0) && r.marcasGas.length) faltando.push("preço do gás");
-  if (!(r.precoAgua > 0) && r.marcasAgua.length) faltando.push("preço da água");
-  return faltando;
 }
 
 const DIAS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];

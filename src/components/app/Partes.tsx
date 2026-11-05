@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { ArrowRight, Loader2, Minus, Plus, X } from "lucide-react";
-import { buscarCep, mascaraCep, salvarLocal } from "@/lib/local";
+import { buscarCep, mascaraCep, salvarLocal, type Local } from "@/lib/local";
 import { MAX_ITENS } from "@/lib/sacola";
 
 export function AppShell({ children }: { children: ReactNode }) {
@@ -31,23 +31,23 @@ export function Quantidade({
         type="button"
         onClick={onMais}
         aria-label={`Adicionar ${rotulo}`}
-        className="flex h-9 w-9 items-center justify-center rounded-full bg-white text-cobalto shadow-[0_2px_10px_rgba(16,17,20,0.16)] ring-1 ring-black/5 transition active:scale-90"
+        className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-cobalto shadow-[0_2px_10px_rgba(16,17,20,0.16)] ring-1 ring-black/5 transition active:scale-90"
       >
-        <Plus className="h-[18px] w-[18px]" strokeWidth={2.75} />
+        <Plus className="h-5 w-5" strokeWidth={2.75} />
       </button>
     );
   }
   return (
-    <div className="flex h-9 items-center rounded-full bg-tinta text-white shadow-[0_2px_10px_rgba(16,17,20,0.22)]">
+    <div className="flex h-11 items-center rounded-full bg-tinta text-white shadow-[0_2px_10px_rgba(16,17,20,0.22)]">
       <button
         type="button"
         onClick={onMenos}
         aria-label={`Diminuir ${rotulo}`}
-        className="flex h-9 w-9 items-center justify-center rounded-full transition active:scale-90"
+        className="flex h-11 w-11 items-center justify-center rounded-full transition active:scale-90"
       >
-        <Minus className="h-4 w-4" strokeWidth={2.75} />
+        <Minus className="h-[18px] w-[18px]" strokeWidth={2.75} />
       </button>
-      <span className="min-w-4 text-center text-sm font-bold tabular-nums" aria-live="polite">
+      <span className="min-w-4 text-center text-[15px] font-bold tabular-nums" aria-live="polite">
         {valor}
       </span>
       <button
@@ -55,15 +55,15 @@ export function Quantidade({
         onClick={onMais}
         disabled={valor >= MAX_ITENS}
         aria-label={`Aumentar ${rotulo}`}
-        className="flex h-9 w-9 items-center justify-center rounded-full transition active:scale-90 disabled:opacity-40"
+        className="flex h-11 w-11 items-center justify-center rounded-full transition active:scale-90 disabled:opacity-40"
       >
-        <Plus className="h-4 w-4" strokeWidth={2.75} />
+        <Plus className="h-[18px] w-[18px]" strokeWidth={2.75} />
       </button>
     </div>
   );
 }
 
-export function CepForm({ onOk, autoFocus = false }: { onOk?: () => void; autoFocus?: boolean }) {
+export function CepForm({ onOk, autoFocus = false }: { onOk?: (local: Local) => void; autoFocus?: boolean }) {
   const [cep, setCep] = useState("");
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState("");
@@ -79,7 +79,7 @@ export function CepForm({ onOk, autoFocus = false }: { onOk?: () => void; autoFo
         return;
       }
       salvarLocal(local);
-      onOk?.();
+      onOk?.(local);
     } catch {
       setErro("Não deu pra consultar o CEP agora. Tente de novo.");
     } finally {
@@ -122,7 +122,19 @@ export function CepForm({ onOk, autoFocus = false }: { onOk?: () => void; autoFo
   );
 }
 
-export function CepSheet({ aberto, onFechar }: { aberto: boolean; onFechar: () => void }) {
+export function CepSheet({
+  aberto,
+  onFechar,
+  onOk,
+  titulo = "Onde entregamos?",
+  texto = "Com o CEP mostramos a revenda da sua região, os preços e o prazo.",
+}: {
+  aberto: boolean;
+  onFechar: () => void;
+  onOk?: (local: Local) => void;
+  titulo?: string;
+  texto?: string;
+}) {
   if (!aberto) return null;
   return (
     <div
@@ -139,10 +151,8 @@ export function CepSheet({ aberto, onFechar }: { aberto: boolean; onFechar: () =
         <div className="mx-auto mb-5 h-1 w-9 rounded-full bg-linha sm:hidden" />
         <div className="flex items-start justify-between gap-4">
           <div>
-            <h2 className="titulo-largo text-[24px]">Onde entregamos?</h2>
-            <p className="mt-2 text-sm text-apagado">
-              Com o CEP mostramos a revenda da sua região, os preços e o prazo.
-            </p>
+            <h2 className="titulo-largo text-[24px]">{titulo}</h2>
+            <p className="mt-2 text-sm text-apagado">{texto}</p>
           </div>
           <button
             type="button"
@@ -154,7 +164,13 @@ export function CepSheet({ aberto, onFechar }: { aberto: boolean; onFechar: () =
           </button>
         </div>
         <div className="mt-5">
-          <CepForm onOk={onFechar} autoFocus />
+          <CepForm
+            onOk={(local) => {
+              onOk?.(local);
+              onFechar();
+            }}
+            autoFocus
+          />
         </div>
       </div>
     </div>
@@ -172,31 +188,42 @@ export function Bloco({ titulo, sub, children }: { titulo: string; sub?: string;
 }
 
 export function Campo({
+  id,
   rotulo,
   valor,
   onChange,
   opcional,
+  invalido,
   type = "text",
   inputMode,
   autoComplete,
   placeholder,
 }: {
+  id?: string;
   rotulo: string;
   valor: string;
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   opcional?: boolean;
+  invalido?: boolean;
   type?: string;
   inputMode?: React.HTMLAttributes<HTMLInputElement>["inputMode"];
   autoComplete?: string;
   placeholder?: string;
 }) {
   return (
-    <label className="block rounded-xl bg-papel px-3 pb-2 pt-1.5 ring-1 ring-transparent transition focus-within:bg-white focus-within:ring-tinta">
-      <span className="block text-[11px] font-medium text-apagado">
+    <label
+      className={`block scroll-mt-28 rounded-xl px-3 pb-2 pt-1.5 ring-1 transition focus-within:bg-white focus-within:ring-tinta ${
+        invalido ? "bg-red-50 ring-red-500" : "bg-papel ring-transparent"
+      }`}
+    >
+      <span className={`block text-[11px] font-medium ${invalido ? "text-red-700" : "text-apagado"}`}>
         {rotulo}
         {opcional && " · opcional"}
+        {invalido && " · obrigatório"}
       </span>
       <input
+        id={id}
+        aria-invalid={invalido || undefined}
         type={type}
         value={valor}
         onChange={onChange}
